@@ -60,14 +60,14 @@ index f011af660..18cd9fa14 100644
 +	struct sock *sk = (struct sock *)chan->private;
 +	struct l2tp_session *session;
 +
-+	if (path->flags & DEV_PATH_TNL)
++	if (path->flags & BIT(DEV_PATH_TNL))
 +		return -EEXIST;
 +
 +	session = pppol2tp_sock_to_session(sk);
 +	if (!session)
 +		return -EINVAL;
 +
-+	path->flags |= DEV_PATH_TNL;
++	path->flags |= BIT(DEV_PATH_TNL);
 +
 +	return 0;
 +}

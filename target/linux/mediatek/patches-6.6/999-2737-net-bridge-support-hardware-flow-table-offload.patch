@@ -33,7 +33,7 @@ index b82906fc9..a7232e4ad 100644
 +	struct net_bridge *br = netdev_priv(dev);
 +	struct net_bridge_fdb_entry *dst;
 +
-+	if (!(path->flags & DEV_PATH_ETHERNET))
++	if (!(path->flags & BIT(DEV_PATH_ETHERNET)))
 +		return -EINVAL;
 +
 +	dst = br_fdb_find_rcu(br, path->eth_dest, path->vlan_id);

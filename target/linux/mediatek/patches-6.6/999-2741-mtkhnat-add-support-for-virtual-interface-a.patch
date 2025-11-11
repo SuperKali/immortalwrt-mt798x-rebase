@@ -74,10 +74,10 @@ index b83031a12..23755b2a6 100644
 +	struct net_device *dev = path->dev;
 +	struct ip6_tnl *tnl = netdev_priv(dev);
 +
-+	if (path->flags & DEV_PATH_DSLITE)
++	if (path->flags & BIT(DEV_PATH_DSLITE))
 +		return -EEXIST;
 +
-+	path->flags |= DEV_PATH_DSLITE;
++	path->flags |= BIT(DEV_PATH_DSLITE);
 +	path->dev = tnl->dev;
 +
 +	return 0;
@@ -123,10 +123,10 @@ index 3ffb6a5b1..442a30536 100644
 +	struct net_device *dev = path->dev;
 +	struct ip_tunnel *tnl = netdev_priv(dev);
 +
-+	if (path->flags & DEV_PATH_6RD)
++	if (path->flags & BIT(DEV_PATH_6RD))
 +		return -EEXIST;
 +
-+	path->flags |= DEV_PATH_6RD;
++	path->flags |= BIT(DEV_PATH_6RD);
 +	path->dev = tnl->dev;
 +
 +	return 0;

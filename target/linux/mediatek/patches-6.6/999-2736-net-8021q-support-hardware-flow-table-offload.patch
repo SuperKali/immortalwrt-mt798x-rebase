@@ -33,10 +33,10 @@ index d3e511e1e..0bf7af676 100644
 +	struct net_device *dev = path->dev;
 +	struct vlan_dev_priv *vlan = vlan_dev_priv(dev);
 +
-+	if (path->flags & DEV_PATH_VLAN)
++	if (path->flags & BIT(DEV_PATH_VLAN))
 +		return -EEXIST;
 +
-+	path->flags |= DEV_PATH_VLAN;
++	path->flags |= BIT(DEV_PATH_VLAN);
 +	path->vlan_proto = vlan->vlan_proto;
 +	path->vlan_id = vlan->vlan_id;
 +	path->dev = vlan->real_dev;
