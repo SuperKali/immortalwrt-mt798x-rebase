@@ -13,7 +13,7 @@ index bb3feca0f..299503d7a 100644
 +			reset-names = "mtketh";
 +			status = "okay";
 +			mtketh-wan = "eth1";
-+			mtketh-lan = "eth0";
++			mtketh-lan = "lan";
 +			mtketh-max-gmac = <2>;
 +			mtketh-ppe-num = <2>;
 +		};
