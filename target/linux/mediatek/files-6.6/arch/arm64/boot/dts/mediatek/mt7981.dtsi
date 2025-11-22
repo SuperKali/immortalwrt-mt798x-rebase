@@ -136,6 +136,10 @@
 			compatible = "mediatek,mt7981-consys";
 			reg = <0 0x10000000 0 0x8600000>;
 			memory-region = <&wmcpu_emi>;
+			/* This is synced from driver changes */
+			clocks = <&topckgen CLK_TOP_NETSYS_MCU_SEL>,
+				 <&topckgen CLK_TOP_AP2CNN_HOST_SEL>;
+			clock-names = "mcu", "ap2conn";
 		};
 
 		infracfg: clock-controller@10001000 {
