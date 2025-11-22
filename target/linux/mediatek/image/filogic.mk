@@ -83,10 +83,6 @@ define Build/append-gl-metadata
 	}
 endef
 
-define Build/append-openwrt-one-eeprom
-	dd if=$(STAGING_DIR_IMAGE)/mt7981_eeprom_mt7976_dbdc.bin >> $@
-endef
-
 define Build/zyxel-nwa-fit-filogic
 	$(TOPDIR)/scripts/mkits-zyxel-fit-filogic.sh \
 		$@.its $@ "80 e1 ff ff ff ff ff ff ff ff"
@@ -1806,7 +1802,6 @@ define Device/openwrt_one
 					   mt7981-bl2 spim-nand-ubi-ddr4 | pad-to 1024k | \
 					   ubinize-image fit squashfs-sysupgrade.itb
   ARTIFACT/nor-factory.bin		:= mt7981-bl2 nor-ddr4 | pad-to 256k | \
-					   append-openwrt-one-eeprom | pad-to 1024k | \
 					   mt7981-bl31-uboot openwrt_one-nor | pad-to 512k | \
 					   append-image-stage initramfs.itb
   UBINIZE_OPTS := -E 5
