@@ -1,0 +1,11 @@
+--- a/mt_wifi/embedded/ap/ap_band_steering.c
++++ b/mt_wifi/embedded/ap/ap_band_steering.c
+@@ -24,7 +24,7 @@
+ #define BNDSTRG_DRIVER_VER	"3.1.2"
+ 
+ #ifndef APMT2_PEER_PROBE_REQ
+-#define APMT2_PEER_PROBE_REQ		0
++#define APMT2_PEER_PROBE_REQ		4
+ #endif
+ #ifndef APMT2_PEER_DISASSOC_REQ
+ #define APMT2_PEER_DISASSOC_REQ     1
