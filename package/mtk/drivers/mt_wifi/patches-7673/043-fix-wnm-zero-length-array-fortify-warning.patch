@@ -1,0 +1,64 @@
+--- a/mt_wifi/embedded/include/oid.h
++++ b/mt_wifi/embedded/include/oid.h
+@@ -1962,7 +1962,7 @@
+ 	UINT32 ifindex;
+ 	UCHAR peer_mac_addr[6];
+ 	UINT32 anqp_req_len;
+-	UCHAR anqp_req[0];
++	UCHAR anqp_req[];
+ };
+ 
+ struct anqp_rsp_data {
+@@ -1970,7 +1970,7 @@
+ 	UCHAR peer_mac_addr[6];
+ 	UINT16 status;
+ 	UINT32 anqp_rsp_len;
+-	UCHAR anqp_rsp[0];
++	UCHAR anqp_rsp[];
+ };
+ 
+ struct hs_onoff {
+@@ -1985,7 +1985,7 @@
+ 	UINT32 ifindex;
+ 	UCHAR peer_mac_addr[6];
+ 	UINT32 wnm_req_len;
+-	UCHAR wnm_req[0];
++	UCHAR wnm_req[];
+ };
+ #endif
+ struct wapp_param_setting {
+@@ -2027,7 +2027,7 @@
+ 	UCHAR peer_mac_addr[6];
+ 	UINT32 type;
+ 	UINT32 wnm_req_len;
+-	UCHAR wnm_req[0];
++	UCHAR wnm_req[];
+ };
+ 
+ struct qosmap_data {
+@@ -2208,7 +2208,7 @@
+ 	UINT32 ifindex;
+ 	UCHAR peer_mac_addr[6];
+ 	UINT32 nr_req_len;
+-	UCHAR nr_req[0];
++	UCHAR nr_req[];
+ };
+ 
+ typedef struct GNU_PACKED nr_rsp_data_s {
+@@ -2399,14 +2399,14 @@
+ 	UINT32 ifindex;
+ 	UCHAR peer_mac_addr[6];
+ 	UINT32 btm_query_len;
+-	UCHAR btm_query[0];
++	UCHAR btm_query[];
+ };
+ 
+ struct GNU_PACKED btm_rsp_data {
+ 	UINT32 ifindex;
+ 	UCHAR peer_mac_addr[6];
+ 	UINT32 btm_rsp_len;
+-	UCHAR btm_rsp[0];
++	UCHAR btm_rsp[];
+ };
+ 
+ struct GNU_PACKED reduced_neighbor_list_data {
