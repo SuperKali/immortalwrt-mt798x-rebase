@@ -1,0 +1,28 @@
+--- a/mt_wifi/embedded/fsm/ap_mgmt_auth.c
++++ b/mt_wifi/embedded/fsm/ap_mgmt_auth.c
+@@ -721,9 +721,22 @@
+ 		/* If wdev bandix does not match to pEntry bandidex, remove entry. */
+ 		WdevBandIdx = HcGetBandByWdev(&pAd->ApCfg.MBSSID[pEntry->func_tb_idx].wdev);
+ 		ChBandIdx = HcGetBandByWdev(wdev);
+ 		if (WdevBandIdx != ChBandIdx) {
+-			MTWF_DBG(pAd, DBG_CAT_AP, DBG_SUBCAT_ALL, DBG_LVL_ERROR,
+-				"wcid%d exist in Band%d but Recv Band%d, CH%d => SKIP\n",
++			MTWF_DBG(pAd, DBG_CAT_AP, DBG_SUBCAT_ALL, DBG_LVL_WARN,
++				"wcid%d exist in Band%d but Recv Band%d, CH%d => cross-band migration\n",
+ 				pEntry->wcid, WdevBandIdx, ChBandIdx, Elem->Channel);
++#ifdef BAND_STEERING
++			/* Reset band steering state for this client so that
++			 * BndStrg_CheckConnectionReq() won't reject the auth
++			 * request on the new band while the old entry is being
++			 * cleaned up. This fixes a race condition where the
++			 * client loops between bands indefinitely. */
++			{
++				PBND_STRG_CLI_TABLE table = Get_BndStrgTable(pAd, wdev->func_idx);
++				PBND_STRG_CLI_ENTRY bs_entry = table ? BndStrg_TableLookup(table, pEntry->Addr) : NULL;
++				if (bs_entry)
++					bs_entry->BndStrg_Sta_State = BNDSTRG_STA_INIT;
++			}
++#endif /* BAND_STEERING */
+ 			MacTableDeleteEntry(pAd, pEntry->wcid, pEntry->Addr);
+ 			pEntry = NULL;
+ 		} else if (!RTMPEqualMemory(pAuth_info->addr1,
