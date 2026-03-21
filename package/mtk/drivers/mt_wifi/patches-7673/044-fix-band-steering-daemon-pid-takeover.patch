@@ -1,0 +1,11 @@
+--- a/mt_wifi/embedded/ap/ap_band_steering.c
++++ b/mt_wifi/embedded/ap/ap_band_steering.c
+@@ -1871,7 +1871,7 @@
+ 
+ 		MTWF_DBG(NULL, DBG_CAT_ALL, DBG_SUBCAT_ALL, DBG_LVL_DEBUG, "%s: action code (%d)\n", __func__, msg->Action);
+ 
+-		if ((table->DaemonPid != 0xffffffff) && (table->DaemonPid != current->pid)) {
++		if ((table->DaemonPid != 0xffffffff) && (table->DaemonPid != current->pid) && (msg->Action != BNDSTRG_ONOFF)) {
+ 			BNDSTRG_MSG new_msg = { 0 };
+ 
+ 			new_msg.Action = REJECT_EVENT;
