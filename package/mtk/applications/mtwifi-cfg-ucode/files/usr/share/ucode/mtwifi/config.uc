@@ -24,6 +24,14 @@ import { defs } from 'mtwifi.defaults';
 import { log } from 'mtwifi.utils';
 import * as driver from 'mtwifi.driver';
 import * as converter from 'mtwifi.converter';
+import * as fs from 'fs';
+
+function bridge_master(vif) {
+	let link = fs.readlink(`/sys/class/net/${vif}/master`);
+	if (!link) return "-";
+	let parts = split(link, "/");
+	return parts[length(parts) - 1] || "-";
+}
 
 function get_sibling_devs(my_devname, all_devnames) {
     let sib_devnames = [];
@@ -223,8 +231,16 @@ export function setup(uci_cfg, all_devs) {
 			log.debug(`[UCI] idx:${idx}, vif: ${vif}, disabled: ${vif_cfg.disabled ? true : false}, iface: ${iface}, iface cfg:${vif_cfg}`);
 
 			if (vif && !vif_cfg.disabled) {
+				log.debug(`[Diag] postTask ifup current dev=${cur_devname} vif=${vif} mode=${vif_cfg.mode}`);
 				driver.ifup(vif);
 				driver.apply_runtime_hooks(vif_cfg, vif);
+
+				// fallback: ensure vif is in its bridge after ifup
+				let bridge = iface.bridge;
+				if (bridge && vif_cfg.mode == "ap") {
+					system(`brctl addif ${bridge} ${vif} 2>/dev/null`);
+				}
+				log.debug(`[Diag] postTask current master dev=${cur_devname} vif=${vif} master=${bridge_master(vif)}`);
 			}
 		}
 		
