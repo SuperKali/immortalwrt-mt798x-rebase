@@ -54,6 +54,10 @@
         "twt": {
             "type": "string",
             "description": "Target Wake Time support"
+        },
+        "bandsteering": {
+            "type": "boolean",
+            "description": "Enable Band Steering"
         }
     }
 }

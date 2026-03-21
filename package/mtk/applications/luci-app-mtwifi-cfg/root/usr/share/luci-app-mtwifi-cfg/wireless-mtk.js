@@ -733,10 +733,11 @@ return view.extend({
 				timestr
 			];
 
-			if (bss.network.isClientDisconnectSupported()) {
-				if (table.firstElementChild.childNodes.length < 6)
-					table.firstElementChild.appendChild(E('th', { 'class': 'th cbi-section-actions'}));
+			/* Add mtwifi DisConnectSta support */
+			if (table.firstElementChild.childNodes.length < 8)
+				table.firstElementChild.appendChild(E('th', { 'class': 'th cbi-section-actions'}));
 
+			if (bss.network.isClientDisconnectSupported()) {
 				row.push(E('button', {
 					'class': 'cbi-button cbi-button-remove',
 					'click': L.bind(function(net, mac, ev) {
@@ -751,7 +752,54 @@ return view.extend({
 				}, [ _('Disconnect') ]));
 			}
 			else {
-				row.push('-');
+				var disconnectClient = function(ifname, mac) {
+					// 1: iwpriv 2: mwctl
+					return new Promise((resolve, reject) => {
+						fs.exec('/usr/sbin/iwpriv', [ifname, 'set', 'DisConnectSta=' + mac]).then(result => {
+							if (result.code === 0)
+								resolve({ success: true, method: 'iwpriv' });
+							else
+								reject(new Error('iwpriv failed: ' + (result.stderr || 'code ' + result.code)));
+						}).catch(() => {
+							fs.exec('/usr/sbin/mwctl', [ifname, 'set', 'DisConnectSta=' + mac]).then(result => {
+								if (result.code === 0)
+									resolve({ success: true, method: 'mwctl' });
+								else
+									reject(new Error('mwctl failed: ' + (result.stderr || 'code ' + result.code)));
+							}).catch(reject);
+						});
+					});
+				};
+
+				row.push(E('button', {
+					'class': 'cbi-button cbi-button-remove',
+					'click': ui.createHandlerFn(this, function(ev) {
+						// Update UI feedback
+						var rowElement = dom.parent(ev.currentTarget, '.tr'),
+								button = ev.currentTarget;
+
+						if (rowElement) rowElement.style.opacity = 0.5;
+						button.classList.add('spinning');
+						button.disabled = true;
+						button.blur();
+
+						disconnectClient(bss.network.getIfname(), bss.mac)
+						.then(() => {
+							ui.addNotification(null, E('p', _('The client has successfully disconnected')));
+							// Refresh the page in 2 seconds
+							setTimeout(() => window.location.reload(), 2000);
+						})
+						.catch(error => {
+							// Restore UI state
+							if (rowElement) rowElement.style.opacity = 1;
+							button.classList.remove('spinning');
+							button.disabled = false;
+							ui.addNotification(null, E('p', _('Failed to disconnect client: %s').format(error.message)));
+						});
+					}),
+					'disabled': isReadonlyView || null,
+					'title': _('Disconnect client: %s').format(bss.mac)
+				}, [ _('Disconnect') ]));
 			}
 
 			trows.push(row);
@@ -1041,9 +1089,13 @@ return view.extend({
 
 					if (is_dbdc_main)
 					{
+						o = ss.taboption('advanced', form.Flag, 'bandsteering', _('Band Steering'),
+							_('Automatically steer dual-band clients to the best band based on signal strength and capabilities.'));
+						o.default = o.disabled;
+
 						o = ss.taboption('advanced', form.Flag, 'whnat', _('Wireless HWNAT'));
 						o.default = o.enabled;
-	
+
 						o = ss.taboption('advanced', form.Value, 'beacon_int', _('Beacon Interval'));
 						o.optional = true;
 						o.datatype = 'range(20,999)';

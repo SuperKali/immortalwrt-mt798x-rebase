@@ -196,7 +196,16 @@ export function convert(uci_cfg) {
 			// priority: uci_key, default value
 			dat[dat_key] = to_str(conf[uci_key] || def_val);
 		}
+
+		// Band Steering — explicit mapping since Flag gives "1"/"0"
+		let bs = (conf.bandsteering == "1" || conf.bandsteering == 1 || conf.bandsteering == true) ? "1" : "0";
+		dat.BandSteering = bs;
+		dat.BndStrgBssIdx = bs == "1" ? "1" : "";
 	}
+
+	// BndStrgBssIdx must be set on all bands
+	if (dat.BandSteering == "1")
+		dat.BndStrgBssIdx = "1";
 
 	// ------------------------------------------
 	// APCLI (Client/STA)
