@@ -1,0 +1,28 @@
+--- a/mt_wifi/embedded/ap/ap_band_steering.c
++++ b/mt_wifi/embedded/ap/ap_band_steering.c
+@@ -1836,6 +1836,25 @@
+ 
+ 	table = Get_BndStrgTable(pAd, apidx);
+ 
++	/* Late-init: BndStrg_TableInit fails at boot when channel=auto
++	 * because wdev->channel is 0. Initialize the table fields now
++	 * without zeroing memory (table may be accessed concurrently). */
++	if (table && !table->bInitialized) {
++		BSS_STRUCT *pMbss = &pAd->ApCfg.MBSSID[apidx];
++		UINT8 Channel = pMbss->wdev.channel;
++		if (Channel) {
++			UINT8 Band = WMODE_CAP_5G(pMbss->wdev.PhyMode) ? BAND_5G : BAND_24G;
++			table->DaemonPid = 0xffffffff;
++			table->priv = (VOID *) pAd;
++			table->Band = Band;
++			table->Channel = Channel;
++			table->bInitialized = TRUE;
++			MTWF_DBG(pAd, DBG_CAT_ALL, DBG_SUBCAT_ALL, DBG_LVL_WARN,
++				"BndStrg late-init: band=%s ch=%d apidx=%d\n",
++				IS_5G_BAND(Band) ? "5G" : "2G", Channel, apidx);
++		}
++	}
++
+ 	if (!table || (table->bInitialized == FALSE)) {
+ 		MTWF_DBG(pAd, DBG_CAT_ALL, DBG_SUBCAT_ALL, DBG_LVL_WARN,
+ 						  "BND_STRG_NOT_INITIALIZED on apidex[%d]!\n", apidx);
