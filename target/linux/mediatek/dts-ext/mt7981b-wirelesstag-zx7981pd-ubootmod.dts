@@ -306,3 +306,7 @@
 	status = "okay";
 };
 
+&hnat {
+	ext-devices-prefix = "wwan", "usb", "eth1";
+};
+
