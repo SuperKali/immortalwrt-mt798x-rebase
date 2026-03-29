@@ -1,0 +1,46 @@
+--- a/drivers/net/ethernet/mediatek/mtk_hnat/hnat_nf_hook.c	2026-03-25 00:56:47.254019328 +0100
++++ b/drivers/net/ethernet/mediatek/mtk_hnat/hnat_nf_hook.c	2026-03-25 09:45:53.390742673 +0100
+@@ -727,6 +727,34 @@
+ 	}
+ }
+ 
++/* Direct TX to QDMA/PPE bypassing qdisc carrier check.
++ * dev_queue_xmit() drops packets when carrier is off, but the QDMA TX
++ * ring and PPE work internally regardless of PHY link state.
++ * This calls ndo_start_xmit directly with proper locking.
++ */
++static int hnat_ppd_xmit(struct sk_buff *skb)
++{
++	struct net_device *dev = skb->dev;
++	struct netdev_queue *txq;
++	int ret;
++
++	if (unlikely(!netif_running(dev)))
++		return -1;
++
++	txq = netdev_get_tx_queue(dev, 0);
++
++	local_bh_disable();
++	HARD_TX_LOCK(dev, txq, smp_processor_id());
++	if (!netif_xmit_frozen_or_drv_stopped(txq))
++		ret = netdev_start_xmit(skb, dev, txq, false);
++	else
++		ret = NETDEV_TX_BUSY;
++	HARD_TX_UNLOCK(dev, txq);
++	local_bh_enable();
++
++	return dev_xmit_complete(ret) ? 0 : -1;
++}
++
+ static unsigned int do_hnat_ext_to_ge(struct sk_buff *skb, const struct net_device *in,
+ 				      const char *func)
+ {
+@@ -749,7 +777,7 @@
+ 		skb->vlan_tci =
+ 			(VLAN_CFI_MASK | (in->ifindex & VLAN_VID_MASK));
+ 		skb->dev = hnat_priv->g_ppdev;
+-		dev_queue_xmit(skb);
++		hnat_ppd_xmit(skb);
+ 		if (debug_level >= 7) {
+ 			trace_printk("%s: vlan_prot=0x%x, vlan_tci=%x, in->name=%s, skb->dev->name=%s\n",
+ 				     __func__, ntohs(skb->vlan_proto), skb->vlan_tci,
