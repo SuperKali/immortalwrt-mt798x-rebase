@@ -1,0 +1,20 @@
+--- a/mt_wifi/embedded/include/rrm_cmm.h
++++ b/mt_wifi/embedded/include/rrm_cmm.h
+@@ -171,7 +171,7 @@
+ 	UINT8 measuretype;
+ 	UINT8 stamac[MAC_ADDR_LEN];
+ 	UINT16 DataLen;
+-	UCHAR Data[0];
++	UCHAR Data[];
+ } BCN_EVENT_DATA, *PBCN_EVENT_DATA;
+
+ /*this struct is used for mlme*/
+@@ -180,7 +180,7 @@
+ 	UINT8 MeasureReqToken;
+ 	UINT8 stamac[MAC_ADDR_LEN];
+ 	UINT16 DataLen;
+-	UCHAR Data[0];
++	UCHAR Data[];
+ } NR_EVENT_DATA, *PNR_EVENT_DATA;
+
+ typedef struct GNU_PACKED _RRM_FRAME {
