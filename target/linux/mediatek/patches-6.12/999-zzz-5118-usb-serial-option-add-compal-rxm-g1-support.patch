@@ -1,0 +1,15 @@
+--- a/drivers/usb/serial/option.c	2026-03-29 08:27:22.997305706 +0200
++++ b/drivers/usb/serial/option.c	2026-03-29 11:59:54.484911122 +0200
+@@ -1154,6 +1154,12 @@
+ 	{ USB_DEVICE_INTERFACE_CLASS(BANDRICH_VENDOR_ID, BANDRICH_PRODUCT_1012, 0xff) },
+ 	{ USB_DEVICE(KYOCERA_VENDOR_ID, KYOCERA_PRODUCT_KPC650) },
+ 	{ USB_DEVICE(KYOCERA_VENDOR_ID, KYOCERA_PRODUCT_KPC680) },
++	{ USB_DEVICE(QUALCOMM_VENDOR_ID, 0x9091),  /* Compal RXM-G1 / Tri Cascade VOS_5G QMI */
++	  .driver_info = RSVD(2) | RSVD(3) },     /* skip If#2 (qmi_wwan) and If#3 (adb) */
++	{ USB_DEVICE(QUALCOMM_VENDOR_ID, 0x90D5),  /* Compal RXM-G1 / Tri Cascade VOS_5G MBIM */
++	  .driver_info = RSVD(1) | RSVD(2) | RSVD(3) }, /* skip If#1 (adb), If#2 (mbim ctrl), If#3 (mbim data) */
++	{ USB_DEVICE(QUALCOMM_VENDOR_ID, 0x9059),  /* Compal RXM-G1 / Tri Cascade VOS_5G ECM+DUN */
++	  .driver_info = RSVD(0) | RSVD(1) | RSVD(4) }, /* skip ECM(0,1) and ADB(4) */
+ 	{ USB_DEVICE(QUALCOMM_VENDOR_ID, 0x6000)}, /* ZTE AC8700 */
+ 	{ USB_DEVICE_AND_INTERFACE_INFO(QUALCOMM_VENDOR_ID, 0x6001, 0xff, 0xff, 0xff), /* 4G LTE usb-modem U901 */
+ 	  .driver_info = RSVD(3) },
