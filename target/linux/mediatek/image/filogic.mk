@@ -620,8 +620,8 @@ define Device/bananapi_bpi-r3-mini
   DEVICE_DTS_DIR := ../dts
   DEVICE_DTS_LOADADDR := 0x43f00000
   DEVICE_PACKAGES := kmod-eeprom-at24 kmod-hwmon-pwmfan   \
-		     kmod-phy-airoha-en8811h kmod-usb3 e2fsprogs f2fsck mkf2fs  \
-		     automount
+		     kmod-phy-airoha-en8811h airoha-en8811h-firmware \
+		     kmod-usb3 e2fsprogs f2fsck mkf2fs automount
   KERNEL_LOADADDR := 0x44000000
   KERNEL := kernel-bin | gzip
   KERNEL_INITRAMFS := kernel-bin | lzma | \
@@ -1926,7 +1926,7 @@ define Device/keenetic_kn-3911
   DEVICE_MODEL := KN-3911
   DEVICE_DTS := mt7981b-keenetic-kn-3911
   DEVICE_DTS_DIR := ../dts
-  DEVICE_PACKAGES :=  kmod-phy-airoha-en8811h
+  DEVICE_PACKAGES := kmod-phy-airoha-en8811h airoha-en8811h-firmware
   UBINIZE_OPTS := -E 5
   BLOCKSIZE := 128k
   PAGESIZE := 2048
@@ -2255,7 +2255,7 @@ define Device/mercusys_mr85x
   DEVICE_MODEL := MR85X
   DEVICE_DTS := mt7981b-mercusys-mr85x
   DEVICE_DTS_DIR := ../dts
-  DEVICE_PACKAGES :=  kmod-phy-airoha-en8811h swconfig kmod-switch-rtl8367s
+  DEVICE_PACKAGES := kmod-phy-airoha-en8811h airoha-en8811h-firmware swconfig kmod-switch-rtl8367s
   UBINIZE_OPTS := -E 5
   BLOCKSIZE := 128k
   PAGESIZE := 2048
