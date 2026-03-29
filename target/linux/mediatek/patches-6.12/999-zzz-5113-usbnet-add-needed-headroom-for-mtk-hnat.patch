@@ -1,0 +1,12 @@
+--- a/drivers/net/usb/usbnet.c	2026-03-25 08:31:30.137409931 +0100
++++ b/drivers/net/usb/usbnet.c	2026-03-25 08:32:10.384574409 +0100
+@@ -1764,6 +1764,9 @@
+ 	 * bind() should set rx_urb_size in that case.
+ 	 */
+ 	dev->hard_mtu = net->mtu + net->hard_header_len;
++#if IS_ENABLED(CONFIG_NET_MEDIATEK_HNAT)
++	net->needed_headroom = 22; /* FOE_INFO_LEN(16) + WIFI_INFO_LEN(6) */
++#endif
+ 	net->min_mtu = 0;
+ 	net->max_mtu = ETH_MAX_MTU;
+ 	net->pcpu_stat_type = NETDEV_PCPU_STAT_TSTATS;
