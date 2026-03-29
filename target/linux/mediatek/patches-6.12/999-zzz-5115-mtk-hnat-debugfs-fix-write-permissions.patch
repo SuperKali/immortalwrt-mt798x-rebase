@@ -1,0 +1,54 @@
+--- a/drivers/net/ethernet/mediatek/mtk_hnat/hnat_debugfs.c	2026-03-28 21:21:10.844709027 +0100
++++ b/drivers/net/ethernet/mediatek/mtk_hnat/hnat_debugfs.c	2026-03-28 21:21:19.114743453 +0100
+@@ -3773,19 +3773,19 @@
+ 			    &hnat_whnat_fops);
+ 	debugfs_create_file("cpu_reason", 0444, root, h,
+ 			    &cpu_reason_fops);
+-	debugfs_create_file("hnat_entry", 0444, root, h,
++	debugfs_create_file("hnat_entry", 0644, root, h,
+ 			    &hnat_entry_fops);
+ 	debugfs_create_file("hnat_stats", 0444, root, h,
+ 			    &hnat_stats_fops);
+-	debugfs_create_file("hnat_setting", 0444, root, h,
++	debugfs_create_file("hnat_setting", 0644, root, h,
+ 			    &hnat_setting_fops);
+ 	debugfs_create_file("mcast_table", 0444, root, h,
+ 			    &hnat_mcast_fops);
+-	debugfs_create_file("hook_toggle", 0444, root, h,
++	debugfs_create_file("hook_toggle", 0644, root, h,
+ 			    &hnat_hook_toggle_fops);
+-	debugfs_create_file("mape_toggle", 0444, root, h,
++	debugfs_create_file("mape_toggle", 0644, root, h,
+ 			    &hnat_mape_toggle_fops);
+-	debugfs_create_file("qos_toggle", 0444, root, h,
++	debugfs_create_file("qos_toggle", 0644, root, h,
+ 			    &hnat_qos_toggle_fops);
+ 	debugfs_create_file("hnat_version", 0444, root, h,
+ 			    &hnat_version_fops);
+@@ -3795,19 +3795,19 @@
+ 			    &hnat_lan_if_fops);
+ 	debugfs_create_file("hnat_lan2_if", 0444, root, h,
+ 			    &hnat_lan2_if_fops);
+-	debugfs_create_file("hnat_ppd_if", 0444, root, h,
++	debugfs_create_file("hnat_ppd_if", 0644, root, h,
+ 			    &hnat_ppd_if_fops);
+-	debugfs_create_file("static_entry", 0444, root, h,
++	debugfs_create_file("static_entry", 0644, root, h,
+ 			    &hnat_static_fops);
+-	debugfs_create_file("tnl_toggle", 0444, root, h,
++	debugfs_create_file("tnl_toggle", 0644, root, h,
+ 			    &hnat_tnl_toggle_fops);
+-	debugfs_create_file("xlat_toggle", 0444, root, h,
++	debugfs_create_file("xlat_toggle", 0644, root, h,
+ 			    &hnat_xlat_toggle_fops);
+-	debugfs_create_file("xlat_cfg", 0444, root, h,
++	debugfs_create_file("xlat_cfg", 0644, root, h,
+ 			    &hnat_xlat_cfg_fops);
+-	debugfs_create_file("l2br_toggle", 0444, root, h,
++	debugfs_create_file("l2br_toggle", 0644, root, h,
+ 			    &hnat_l2br_toggle_fops);
+-	debugfs_create_file("l4s_toggle", 0444, root, h,
++	debugfs_create_file("l4s_toggle", 0644, root, h,
+ 			    &hnat_l4s_toggle_fops);
+ 
+ 	/* init manual_api debugfs node */

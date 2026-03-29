@@ -1,0 +1,20 @@
+--- a/drivers/net/ethernet/mediatek/mtk_eth_dbg.c	2026-03-28 21:59:30.570592030 +0100
++++ b/drivers/net/ethernet/mediatek/mtk_eth_dbg.c	2026-03-28 21:59:39.007621019 +0100
+@@ -2583,7 +2583,7 @@
+ 		}
+ 		eth->debugfs->qdma_sched[i].eth = eth;
+ 		eth->debugfs->qdma_sched[i].id = i;
+-		debugfs_create_file(name, 0444, eth->debugfs->root,
++		debugfs_create_file(name, 0644, eth->debugfs->root,
+ 				    (void *)&eth->debugfs->qdma_sched[i],
+ 				    &mtk_eth_debugfs_qdma_sched_fops);
+ 	}
+@@ -2596,7 +2596,7 @@
+ 		}
+ 		eth->debugfs->qdma_queue[i].eth = eth;
+ 		eth->debugfs->qdma_queue[i].id = i;
+-		debugfs_create_file(name, 0444, eth->debugfs->root,
++		debugfs_create_file(name, 0644, eth->debugfs->root,
+ 				    (void *)&eth->debugfs->qdma_queue[i],
+ 				    &mtk_eth_debugfs_qdma_queue_fops);
+ 	}
