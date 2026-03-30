@@ -47,6 +47,13 @@ function handle_link(dev, data, up)
 {
 	let config = data.config;
 	let bridge_isolate;
+	let networks = config.network ? join(",", config.network) : "";
+
+	netifd.log(netifd.L_NOTICE,
+		`wireless: [Diag] handle_link ifname=${data.ifname} dev=${dev} section=${data.name} ` +
+		`type=${data.type} mode=${config.mode ?? "-"} up=${up} ` +
+		`networks=${networks}\n`
+	);
 	let ap = false;
 	if (dev == data.ifname)
 		ap = data.type == "vlan" ||
@@ -454,8 +461,13 @@ function wdev_mark_up(wdev)
 		return;
 
 	for (let section, data in wdev.handler_data) {
-		if (data.ifname)
+		if (data.ifname) {
+			netifd.log(netifd.L_NOTICE,
+				`wireless: ${wdev.name}: [Diag] mark_up handle_link section=${section} ` +
+				`ifname=${data.ifname} type=${data.type}\n`
+			);
 			handle_link(data.ifname, data, true);
+		}
 	}
 	wdev.state = "up";
 
@@ -492,6 +504,13 @@ function wdev_set_data(wdev, vif, vlan, data)
 	if (cur_type == "vlan")
 		key = vif.name + "/" + vlan.name;
 
+	if (data.ifname)
+		netifd.log(netifd.L_NOTICE,
+			`wireless: ${wdev.name}: [Diag] set_data key=${key} section=${cur.name} ` +
+			`type=${cur_type} ifname=${data.ifname}\n`
+		);
+
+	netifd.log(netifd.L_NOTICE, `wireless: ${wdev.name}: [Diag] set_data stored key=${key} type=${cur_type}\n`);
 	wdev.handler_data[key] = {
 		...cur,
 		...data,
@@ -536,15 +555,24 @@ function notify(req)
 function hotplug(name, add)
 {
 	let dev = name;
+	let raw_name = name;
 	let m = match(name, /(.+)\.sta.+/);
 	if (m)
 		name = m[1];
 
+	netifd.log(netifd.L_NOTICE,
+		`wireless: ${this.name}: [Diag] hotplug event raw=${raw_name} match=${name} ` +
+		`dev=${dev} add=${add}\n`
+	);
 	for (let section, data in this.handler_data) {
 		if (data.ifname != name ||
 		    data.type != "vif" && data.type != "vlan")
 			continue;
 
+		netifd.log(netifd.L_NOTICE,
+			`wireless: ${this.name}: [Diag] hotplug handle_link section=${section} ` +
+			`ifname=${data.ifname} dev=${dev} add=${add}\n`
+		);
 		handle_link(dev, data, add);
 	}
 }
@@ -619,7 +647,7 @@ function destroy()
 
 function dbg(msg)
 {
-	netifd.log(netifd.L_DEBUG, `wireless: ${this.name}: ${msg}\n`);
+	netifd.log(netifd.L_NOTICE, `wireless: ${this.name}: ${msg}\n`);
 }
 
 const wdev_proto = {
