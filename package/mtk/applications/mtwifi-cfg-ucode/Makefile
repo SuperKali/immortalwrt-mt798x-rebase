@@ -17,7 +17,6 @@ UCODE_DEPENDS:= \
   +ucode-mod-log \
   +ucode-mod-ubus \
   +ucode-mod-uci \
-  +ucode-mod-uloop \
   +ucode-mod-datconf \
   +ucode-mod-l1parser
 

@@ -17,21 +17,11 @@
  */
 'use strict';
 
-import { task } from 'uloop';
-
 import * as datconf from 'datconf';
 import { defs } from 'mtwifi.defaults';
 import { log } from 'mtwifi.utils';
 import * as driver from 'mtwifi.driver';
 import * as converter from 'mtwifi.converter';
-import * as fs from 'fs';
-
-function bridge_master(vif) {
-	let link = fs.readlink(`/sys/class/net/${vif}/master`);
-	if (!link) return "-";
-	let parts = split(link, "/");
-	return parts[length(parts) - 1] || "-";
-}
 
 function get_sibling_devs(my_devname, all_devnames) {
     let sib_devnames = [];
@@ -211,75 +201,58 @@ export function setup(uci_cfg, all_devs) {
 	let is_inited = driver.is_vif_inited(main_vif);
 
 	// post setup may need ~20s
-	// netifd kills main process if it waits too long, create a async task to do that
-	const postTask = task(() => {
-		// for DBDC cards, you need to init main dev first
-		if (is_dbdc && !is_inited) {
-			// just init main vif !
-			driver.init_dbdc_card(main_vif);
+	// for DBDC cards, you need to init main dev first
+	if (is_dbdc && !is_inited) {
+		// just init main vif !
+		driver.init_dbdc_card(main_vif);
+	}
+
+	// set vifs in current cfg UP first
+	// implict trace in raw netifd parameter:
+	// DISABLED vifs are not contained in uci_cfg.interfaces
+	// uci_cfg.interfaces will be EMPTY when uci_cfg.disabled = true, that current dev is disabled
+	// current trace:
+	// we read UCI cfg and added disabled ifaces from caller script
+	for (let idx, iface in uci_cfg.interfaces) {
+		let vif = iface.mtwifi_ifname;
+		let vif_cfg = iface.config;
+		log.debug(`[UCI] idx:${idx}, vif: ${vif}, disabled: ${vif_cfg.disabled ? true : false}, iface: ${iface}, iface cfg:${vif_cfg}`);
+
+		if (vif && !vif_cfg.disabled) {
+			driver.ifup(vif);
+			driver.apply_runtime_hooks(vif_cfg, vif);
 		}
+	}
+	
+	// for non DBDC cards, all set and return!
+	if (!is_dbdc) return;
 
-		// set vifs in current cfg UP first
-		// implict trace in raw netifd parameter:
-		// DISABLED vifs are not contained in uci_cfg.interfaces
-		// uci_cfg.interfaces will be EMPTY when uci_cfg.disabled = true, that current dev is disabled
-		// current trace:
-		// we read UCI cfg and added disabled ifaces from caller script
-		for (let idx, iface in uci_cfg.interfaces) {
-			let vif = iface.mtwifi_ifname;
-			let vif_cfg = iface.config;
-			log.debug(`[UCI] idx:${idx}, vif: ${vif}, disabled: ${vif_cfg.disabled ? true : false}, iface: ${iface}, iface cfg:${vif_cfg}`);
-
-			if (vif && !vif_cfg.disabled) {
-				log.debug(`[Diag] postTask ifup current dev=${cur_devname} vif=${vif} mode=${vif_cfg.mode}`);
-				driver.ifup(vif);
-				driver.apply_runtime_hooks(vif_cfg, vif);
-
-				// fallback: ensure vif is in its bridge after ifup
-				let bridge = iface.bridge;
-				if (bridge && vif_cfg.mode == "ap") {
-					system(`brctl addif ${bridge} ${vif} 2>/dev/null`);
-				}
-				log.debug(`[Diag] postTask current master dev=${cur_devname} vif=${vif} master=${bridge_master(vif)}`);
+	// for DBDC cards, restore sibling devs
+	if (diff_res.need_reload) {
+		// in driver reload situation, 
+		// let another process to handle sib devs setup
+		for (let idx, devname in down_devnames) {
+			if (!(devname == cur_devname)) {
+				// use `&` symbol to run in the background,
+				// netifd may handle duplicated `wifi up [dev]` calls
+				// current lock context will not pass to it
+				system(`/sbin/wifi up ${devname} &`);
 			}
 		}
-		
-		// for non DBDC cards, all set and return!
-		if (!is_dbdc) return;
+	} else {
+		// in normal situation,
+		// for DBDC cards, restore vifs of sibling devs (if they were added before)
+		// just restore them in no need for reload situation
+		for (let vif in restore_vifs) {
+			log.notice(`[Main] Restoring sibling vif: ${vif}`);
+			driver.ifup(vif);
 
-		// for DBDC cards, restore sibling devs
-		if (diff_res.need_reload) {
-			// in driver reload situation, 
-			// let another process to handle sib devs setup
-			for (let idx, devname in down_devnames) {
-				if (!(devname == cur_devname)) {
-					// use `&` symbol to run in the background,
-					// netifd may handle duplicated `wifi up [dev]` calls
-					// current lock context will not pass to it
-					system(`/sbin/wifi up ${devname} &`);
-				}
-			}
-		} else {
-			// in normal situation,
-			// for DBDC cards, restore vifs of sibling devs (if they were added before)
-			// just restore them in no need for reload situation
-			for (let vif in restore_vifs) {
-				log.notice(`[Main] Restoring sibling vif: ${vif}`);
-				driver.ifup(vif);
-
-				// for apcli vifs, do apcli triggers
-				if (index(vif, "apcli") >= 0) {
-					driver.trigger_apcli(vif);
-				}
+			// for apcli vifs, do apcli triggers
+			if (index(vif, "apcli") >= 0) {
+				driver.trigger_apcli(vif);
 			}
 		}
-	});
-
-	// after task is created, just return and notify netifd
-	log.info(`[Main] Recovering vifs, create a task to do so. Task PID: ${postTask.pid()}`);
-
-	// let caller script know that main vif is inited or not
-	return is_inited;
+	}
 };
 
 export function down(cur_devname, all_devs) {

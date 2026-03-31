@@ -48,11 +48,6 @@ const types = {
 	"boolean": 7,
 };
 
-function diag_status(tag) {
-	let st = netifd.status(cur_devname);
-	log.debug(`[Diag] handle_setup status tag=${tag} dev=${cur_devname} ok=${st.ok ? true : false} err=${st.err == null ? 0 : st.err} reply=${st.reply}`);
-}
-
 // ==========================================
 //              DUMP
 // ==========================================
@@ -108,8 +103,6 @@ function handle_setup(data) {
     // get all devices from L1 Profile
     let all_devs = l1.getall();
     let cur_dev = all_devs[cur_devname];
-
-    let pending_vifs = [];
 
     if (!cur_dev) {
         netifd.setup_failed("DEVICE_NOT_FOUND");
@@ -240,13 +233,11 @@ function handle_setup(data) {
             // mtwifi_vif_ap_config -> wireless_add_vif
             // NOTE: shell script checked config.disabled before wireless_add_vif
             if (!config.disabled) {
-                // defer set_vif until after cfg.setup() has started the driver
-                push(pending_vifs, {
-                    idx: idx,
-                    ifname: calc_ifname,
-                    mode: mode,
-                    netifd_idx: netifd_idx.get()
-                });
+                // if previous ifaces were disabled, netifd idx may mismatch with UCI index
+                log.info(`[Setup] Add interface: ${idx} -> ${calc_ifname} (mode: ${mode}, netifd idx: ${netifd_idx.get()})`);
+                // here set vif with real netifd idx
+                netifd.set_vif(netifd_idx.get(), calc_ifname);
+                // increase the netifd idx
                 netifd_idx.increase();
             } else {
                 log.info(`[Setup] Skipped disabled interface: ${calc_ifname}`);
@@ -256,28 +247,11 @@ function handle_setup(data) {
 
     /*****          SETUP VIFS        *******/
     // UCI => DAT, ifup, reload driver...
-	let is_inited = cfg.setup(data, all_devs);
-
-    log.debug(`[Diag] handle_setup cfg.setup done dev=${cur_devname} is_inited=${is_inited ? true : false}`);
-
-    // register vifs in netifd AFTER cfg.setup() has started the driver
-    for (let vif in pending_vifs) {
-        log.info(`[Setup] Add interface: ${vif.idx} -> ${vif.ifname} (mode: ${vif.mode}, netifd idx: ${vif.netifd_idx})`);
-        netifd.set_vif(vif.netifd_idx, vif.ifname);
-    }
-
+    cfg.setup(data, all_devs);
     // notify netifd to setup
-	let set_up_ret = netifd.set_up();
-    log.debug(`[Diag] handle_setup set_up dev=${cur_devname} ok=${set_up_ret.ok ? true : false} err=${set_up_ret.err == null ? 0 : set_up_ret.err} reply=${set_up_ret.reply}`);
-    diag_status("after-set_up");
+	netifd.set_up();
 
 	l1.close();
-
-    // init main vifs may take ~10s, the task will hold the lock until its done
-    // if latter setup sessions come up so early, netifd may kill them if it waits too long!!!
-    if (!is_inited) {
-        sleep(10000);
-    }
 }
 
 // ==========================================
