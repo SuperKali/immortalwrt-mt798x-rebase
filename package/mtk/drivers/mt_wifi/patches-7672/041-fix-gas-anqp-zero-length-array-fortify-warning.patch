@@ -1,0 +1,65 @@
+--- a/mt_wifi/embedded/include/oid.h
++++ b/mt_wifi/embedded/include/oid.h
+@@ -1962,7 +1962,7 @@
+ 	UINT32 ifindex;
+ 	UCHAR peer_mac_addr[6];
+ 	UINT32 anqp_req_len;
+-	UCHAR anqp_req[0];
++	UCHAR anqp_req[];
+ };
+ 
+ struct anqp_rsp_data {
+@@ -1970,7 +1970,7 @@
+ 	UCHAR peer_mac_addr[6];
+ 	UINT16 status;
+ 	UINT32 anqp_rsp_len;
+-	UCHAR anqp_rsp[0];
++	UCHAR anqp_rsp[];
+ };
+ 
+ struct hs_onoff {
+--- a/mt_wifi/embedded/include/gas.h
++++ b/mt_wifi/embedded/include/gas.h
+@@ -153,13 +153,13 @@
+ 			UCHAR DialogToken;
+ 			UCHAR AdvertisementProID;
+ 			UINT16 QueryReqLen;
+-			UCHAR QueryReq[0];
++			UCHAR QueryReq[];
+ 		} GNU_PACKED GAS_REQ_DATA;
+ 		struct {
+ 			UINT16 StatusCode;
+ 			UCHAR AdvertisementProID;
+ 			UINT16 QueryRspLen;
+-			UCHAR QueryRsp[0];
++			UCHAR QueryRsp[];
+ 		} GNU_PACKED PEER_GAS_RSP_DATA;
+ 		struct {
+ 			UCHAR DialogToken;
+@@ -168,7 +168,7 @@
+ 			UINT16 StatusCode;
+ 			UCHAR AdvertisementProID;
+ 			UINT16 QueryRspLen;
+-			UCHAR QueryRsp[0];
++			UCHAR QueryRsp[];
+ 		} GNU_PACKED GAS_CB_RSP_DATA;
+ 		struct {
+ 			UCHAR DialogToken;
+@@ -182,7 +182,7 @@
+ 			UINT16 GASComebackDelay;
+ 			UCHAR AdvertisementProID;
+ 			UINT16 QueryRspLen;
+-			UCHAR QueryRsp[0];
++			UCHAR QueryRsp[];
+ 		} GNU_PACKED GAS_RSP_DATA;
+ 		struct {
+ 			UCHAR DialogToken;
+@@ -194,7 +194,7 @@
+ 			UCHAR DialogToken;
+ 			UCHAR AdvertisementProID;
+ 			UINT16 QueryReqLen;
+-			UCHAR QueryReq[0];
++			UCHAR QueryReq[];
+ 		} GNU_PACKED PEER_GAS_REQ_DATA;
+ 		struct {
+ 			UCHAR DialogToken;
