@@ -6,7 +6,7 @@ This repository is worked on ImmortalWrt with MTK OpenWrt Feeds patches imported
 
 ## Commit Cutoff Revisions
 
-### ImmortalWrt: [1cc0390](https://github.com/immortalwrt/immortalwrt/commit/1cc0390ddf5453691059dc4d21e8d1ca3277e023) - OpenWrt 25.12.1
+### ImmortalWrt: [62bd6b3](https://github.com/immortalwrt/immortalwrt/commit/62bd6b3625b47308343252e7875107a8bd665765) - OpenWrt 25.12 SNAPSHOT
 
 ```
 Merge Official Source
@@ -14,29 +14,37 @@ Merge Official Source
 Signed-off-by: Tianling Shen <cnsztl@immortalwrt.org>
 ```
 
-### MTK OpenWrt Feeds: [2459584](https://git01.mediatek.com/plugins/gitiles/openwrt/feeds/mtk-openwrt-feeds/+/24595844f63aebb6ccb9bcd28d9690dbfc541a46)
+### MTK OpenWrt Feeds: [79b79ec](https://git01.mediatek.com/plugins/gitiles/openwrt/feeds/mtk-openwrt-feeds/+/79b79ece6267ea64db5dab853d4576d9b9c11889)
 
 ```
-[][MAC80211][kernel-6.12][wed][Refactor wed msdu page ring init for next generation wifi chip compatible]
+[][kernel][common][eth][Refactor the check condition from PSE_FC to GDM_RXFC in the QDMA Tx hang monitor]
 
 [Description]
-Refactor wed msdu page ring init for next generation wifi chip compatible
-and add mt76 patch for mp4.3 build pass
+Refactor the check condition from PSE_FC to GDM_RXFC in the QDMA Tx hang
+monitor.
+
+Some abnormal devices may send a large number of pause frames to the
+DUT, causing the DUT to repeatedly trigger NETSYS SER if the PSE always
+remains in the flow control condition.
 
 [Root Cause]
-N/A
+PSE_FC status does not accurately reflect the actual state if the flow
+control status does not change from OFF to ON.
 
 [Solution]
-N/A
+Change the QDMA Tx hang check condition from PSE_FC to GDM_RXFC.
 
 [How to Verify]
-N/A
+1. Perform the unbalanced PHY rate test to allow the traffic to occupy
+   many PSE pages.
+2. Sending a large number of pause frames to the DUT.
 
 [Info to Customer]
 N/A
 
-Change-Id: I65784a91c8657b65e0b7ab4961c3a7da8a7cab50
-Reviewed-on: https://gerrit.mediatek.inc/c/openwrt/feeds/mtk_openwrt_feeds/+/11890197
+
+Change-Id: I17e832fe84cf03087a12458bcf50fa1532b45de0
+Reviewed-on: https://gerrit.mediatek.inc/c/openwrt/feeds/mtk_openwrt_feeds/+/11959632
 ```
 
 ### l1parser: [081bb31](https://github.com/chasey-dev/l1parser/commit/081bb31211efc74594d25bfd1bb5811f3408a205)
