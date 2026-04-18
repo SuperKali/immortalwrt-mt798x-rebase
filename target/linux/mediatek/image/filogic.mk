@@ -2582,7 +2582,7 @@ define Device/openwrt_one
   DEVICE_DTC_FLAGS := --pad 4096
   DEVICE_DTS_LOADADDR := 0x43f00000
   DEVICE_PACKAGES :=  \
-	kmod-rtc-pcf8563 kmod-usb3 kmod-phy-airoha-en8811h automount
+	kmod-rtc-pcf8563 kmod-usb3 kmod-phy-airoha-en8811h airoha-en8811h-firmware automount
   KERNEL_LOADADDR := 0x44000000
   KERNEL := kernel-bin | gzip
   KERNEL_INITRAMFS := kernel-bin | lzma | \
