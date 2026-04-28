@@ -12,7 +12,7 @@ index 4c7bed7845cb..46bc2d2676a9 100644
 +			mtketh-lan = "lan";
 +			mtketh-max-gmac = <2>;
 +			mtketh-ppe-num = <2>;
-+			ext-devices-prefix = "wwan", "usb", "eth2";
++			ext-devices-prefix = "wwan", "usb", "eth";
  		};
  
  		wo_ccif0: syscon@151a5000 {

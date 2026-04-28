@@ -1077,13 +1077,10 @@ static int hnat_hw_init(u32 ppe_id)
 								 ENTRY_80B);
 	cr_set_field(hnat_priv->ppe_base[ppe_id] + PPE_TB_CFG, SMA, SMA_FWD_CPU_BUILD_ENTRY);
 
-	/* set ip proto */
-	writel(0xFFFFFFFF, hnat_priv->ppe_base[ppe_id] + PPE_IP_PROT_CHK);
-
 	/* enable FOE */
 	cr_set_bits(hnat_priv->ppe_base[ppe_id] + PPE_FLOW_CFG,
 		    BIT_IPV4_NAT_EN | BIT_IPV4_NAPT_EN |
-		    BIT_IPV4_NAT_FRAG_EN | BIT_IPV4_HASH_GREK |
+		    BIT_IPV4_NAT_FRAG_EN |
 		    BIT_IPV4_DSL_EN | BIT_IPV6_6RD_EN |
 		    BIT_IPV6_3T_ROUTE_EN | BIT_IPV6_5T_ROUTE_EN);
 
@@ -1315,8 +1312,8 @@ static void hnat_stop(u32 ppe_id)
 
 	/* disable FOE */
 	cr_clr_bits(hnat_priv->ppe_base[ppe_id] + PPE_FLOW_CFG,
-		    BIT_IPV4_NAPT_EN | BIT_IPV4_NAT_EN | BIT_IPV4_NAT_FRAG_EN |
-		    BIT_IPV6_HASH_GREK | BIT_IPV4_DSL_EN |
+		    BIT_IPV4_NAPT_EN | BIT_IPV4_NAT_EN |
+		    BIT_IPV4_NAT_FRAG_EN | BIT_IPV4_DSL_EN |
 		    BIT_IPV6_6RD_EN | BIT_IPV6_3T_ROUTE_EN |
 		    BIT_IPV6_5T_ROUTE_EN | BIT_MD_TOAP_BYP_CRSN1 | BIT_MD_TOAP_BYP_CRSN0);
 

@@ -1103,6 +1103,44 @@ static int read_mib(struct mtk_hnat *h, u32 ppe_id,
 
 }
 
+static void hnat_vif_acct_update_dev(int ifindex,
+				     const struct rtnl_link_stats64 *stats64)
+{
+	struct net_device *dev;
+
+	rcu_read_lock();
+
+	dev = dev_get_by_index_rcu(&init_net, ifindex);
+	if (!dev)
+		goto out_unlock;
+
+	if (dev->netdev_ops->ndo_flow_offload_stats64_add)
+		dev->netdev_ops->ndo_flow_offload_stats64_add(dev, stats64);
+out_unlock:
+	rcu_read_unlock();
+}
+
+static void hnat_vif_acct_update(struct mtk_hnat *h, u32 ppe_id,
+				 u32 index, u64 bytes, u64 packets)
+{
+	struct rtnl_link_stats64 rx_stats = { .rx_packets = packets,
+					      .rx_bytes = bytes };
+	struct rtnl_link_stats64 tx_stats = { .tx_packets = packets,
+					      .tx_bytes = bytes };
+	struct hnat_accounting *acct;
+	int iif, oif;
+
+	acct = &h->acct[ppe_id][index];
+	iif = READ_ONCE(acct->iif);
+	oif = READ_ONCE(acct->oif);
+
+	if (iif)
+		hnat_vif_acct_update_dev(iif, &rx_stats);
+
+	if (oif)
+		hnat_vif_acct_update_dev(oif, &tx_stats);
+}
+
 static int hnat_nf_acct_update(struct mtk_hnat *h, u32 ppe_id,
 			       u32 index, u64 bytes, u64 packets)
 {
@@ -1205,7 +1243,10 @@ struct hnat_accounting *hnat_get_count(struct mtk_hnat *h, u32 ppe_id,
 		diff->packets = packets;
 	}
 
-	hnat_nf_acct_update(h, ppe_id, index, bytes, packets);
+	hnat_vif_acct_update(h, ppe_id, index, bytes, packets);
+
+	if (hnat_priv->nf_stat_en)
+		hnat_nf_acct_update(h, ppe_id, index, bytes, packets);
 
 	return &h->acct[ppe_id][index];
 }
@@ -1249,13 +1290,15 @@ static int __hnat_debug_show(struct seq_file *m, void *private, u32 ppe_id)
 				swab16(entry->ipv4_hnapt.dmac_lo);
 			PRINT_COUNT(m, acct);
 			seq_printf(m,
-				   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|%pI4:%d->%pI4:%d=>%pI4:%d->%pI4:%d|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
+				   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|prot=%d|%pI4:%d->%pI4:%d=>%pI4:%d->%pI4:%d|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
 				   entry, ppe_id, ei(entry, end),
-				   es(entry), pt(entry), &saddr,
-				   entry->ipv4_hnapt.sport, &daddr,
-				   entry->ipv4_hnapt.dport, &nsaddr,
-				   entry->ipv4_hnapt.new_sport, &ndaddr,
-				   entry->ipv4_hnapt.new_dport, h_source, h_dest,
+				   es(entry), pt(entry),
+				   entry->bfib1.udp ? IPPROTO_UDP : IPPROTO_TCP,
+				   &saddr, entry->ipv4_hnapt.sport,
+				   &daddr, entry->ipv4_hnapt.dport,
+				   &nsaddr, entry->ipv4_hnapt.new_sport,
+				   &ndaddr, entry->ipv4_hnapt.new_dport,
+				   h_source, h_dest,
 				   ntohs(entry->ipv4_hnapt.sp_tag),
 				   entry->info_blk1,
 				   entry->ipv4_hnapt.info_blk2,
@@ -1275,10 +1318,11 @@ static int __hnat_debug_show(struct seq_file *m, void *private, u32 ppe_id)
 				swab16(entry->ipv4_hnapt.dmac_lo);
 			PRINT_COUNT(m, acct);
 			seq_printf(m,
-				   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|%pI4->%pI4=>%pI4->%pI4|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
+				   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|prot=%d|%pI4->%pI4=>%pI4->%pI4|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
 				   entry, ppe_id, ei(entry, end),
-				   es(entry), pt(entry), &saddr,
-				   &daddr, &nsaddr, &ndaddr, h_source, h_dest,
+				   es(entry), pt(entry), entry->ipv4_hnat.prot,
+				   &saddr, &daddr, &nsaddr, &ndaddr,
+				   h_source, h_dest,
 				   ntohs(entry->ipv4_hnapt.sp_tag),
 				   entry->info_blk1,
 				   entry->ipv4_hnapt.info_blk2,
@@ -1303,8 +1347,9 @@ static int __hnat_debug_show(struct seq_file *m, void *private, u32 ppe_id)
 				swab16(entry->ipv6_5t_route.dmac_lo);
 			PRINT_COUNT(m, acct);
 			seq_printf(m,
-				   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|SIP=%08x:%08x:%08x:%08x(sp=%d)->DIP=%08x:%08x:%08x:%08x(dp=%d)|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
+				   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|prot=%d|SIP=%08x:%08x:%08x:%08x(sp=%d)->DIP=%08x:%08x:%08x:%08x(dp=%d)|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
 				   entry, ppe_id, ei(entry, end), es(entry), pt(entry),
+				   entry->bfib1.udp ? IPPROTO_UDP : IPPROTO_TCP,
 				   ipv6_sip0, ipv6_sip1, ipv6_sip2, ipv6_sip3,
 				   entry->ipv6_5t_route.sport,
 				   ipv6_dip0, ipv6_dip1, ipv6_dip2, ipv6_dip3,
@@ -1333,12 +1378,13 @@ static int __hnat_debug_show(struct seq_file *m, void *private, u32 ppe_id)
 				swab16(entry->ipv6_5t_route.dmac_lo);
 			PRINT_COUNT(m, acct);
 			seq_printf(m,
-				   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|SIP=%08x:%08x:%08x:%08x->DIP=%08x:%08x:%08x:%08x|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
+				   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|prot=%d|SIP=%08x:%08x:%08x:%08x->DIP=%08x:%08x:%08x:%08x|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
 				   entry, ppe_id, ei(entry, end),
-				   es(entry), pt(entry), ipv6_sip0,
-				   ipv6_sip1, ipv6_sip2, ipv6_sip3, ipv6_dip0,
-				   ipv6_dip1, ipv6_dip2, ipv6_dip3, h_source,
-				   h_dest, ntohs(entry->ipv6_3t_route.sp_tag),
+				   es(entry), pt(entry), entry->ipv6_3t_route.prot,
+				   ipv6_sip0, ipv6_sip1, ipv6_sip2, ipv6_sip3,
+				   ipv6_dip0, ipv6_dip1, ipv6_dip2, ipv6_dip3,
+				   h_source, h_dest,
+				   ntohs(entry->ipv6_3t_route.sp_tag),
 				   entry->info_blk1,
 				   entry->ipv6_3t_route.info_blk2,
 				   entry->ipv6_3t_route.vlan1,
@@ -1364,10 +1410,11 @@ static int __hnat_debug_show(struct seq_file *m, void *private, u32 ppe_id)
 				swab16(entry->ipv6_6rd.dmac_lo);
 			PRINT_COUNT(m, acct);
 			seq_printf(m,
-				   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|SIP=%08x:%08x:%08x:%08x(sp=%d)->DIP=%08x:%08x:%08x:%08x(dp=%d)|TSIP=%pI4->TDIP=%pI4|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
+				   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|prot=%d|SIP=%08x:%08x:%08x:%08x(sp=%d)->DIP=%08x:%08x:%08x:%08x(dp=%d)|TSIP=%pI4->TDIP=%pI4|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
 				   entry, ppe_id, ei(entry, end),
-				   es(entry), pt(entry), ipv6_sip0,
-				   ipv6_sip1, ipv6_sip2, ipv6_sip3,
+				   es(entry), pt(entry),
+				   entry->bfib1.udp ? IPPROTO_UDP : IPPROTO_TCP,
+				   ipv6_sip0, ipv6_sip1, ipv6_sip2, ipv6_sip3,
 				   entry->ipv6_6rd.sport, ipv6_dip0,
 				   ipv6_dip1, ipv6_dip2, ipv6_dip3,
 				   entry->ipv6_6rd.dport, &tsaddr, &tdaddr,
@@ -1402,9 +1449,10 @@ static int __hnat_debug_show(struct seq_file *m, void *private, u32 ppe_id)
 
 			if (entry->ipv6_hnapt.eg_ipv6_dir == IPV6_SNAT) {
 				seq_printf(m,
-					   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|SIP=%08x:%08x:%08x:%08x(sp=%d)->DIP=%08x:%08x:%08x:%08x(dp=%d)|NEW_SIP=%08x:%08x:%08x:%08x(sp=%d)->NEW_DIP=%08x:%08x:%08x:%08x(dp=%d)|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
+					   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|prot=%d|SIP=%08x:%08x:%08x:%08x(sp=%d)->DIP=%08x:%08x:%08x:%08x(dp=%d)|NEW_SIP=%08x:%08x:%08x:%08x(sp=%d)->NEW_DIP=%08x:%08x:%08x:%08x(dp=%d)|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
 					   entry, ppe_id, ei(entry, end),
 					   es(entry), pt(entry),
+					   entry->bfib1.udp ? IPPROTO_UDP : IPPROTO_TCP,
 					   ipv6_sip0, ipv6_sip1,
 					   ipv6_sip2, ipv6_sip3,
 					   entry->ipv6_hnapt.sport,
@@ -1425,9 +1473,10 @@ static int __hnat_debug_show(struct seq_file *m, void *private, u32 ppe_id)
 					   entry->ipv6_hnapt.vlan2);
 			} else if (entry->ipv6_hnapt.eg_ipv6_dir == IPV6_DNAT) {
 				seq_printf(m,
-					   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|SIP=%08x:%08x:%08x:%08x(sp=%d)->DIP=%08x:%08x:%08x:%08x(dp=%d)|NEW_SIP=%08x:%08x:%08x:%08x(sp=%d)->NEW_DIP=%08x:%08x:%08x:%08x(dp=%d)|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
+					   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|prot=%d|SIP=%08x:%08x:%08x:%08x(sp=%d)->DIP=%08x:%08x:%08x:%08x(dp=%d)|NEW_SIP=%08x:%08x:%08x:%08x(sp=%d)->NEW_DIP=%08x:%08x:%08x:%08x(dp=%d)|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
 					   entry, ppe_id, ei(entry, end),
 					   es(entry), pt(entry),
+					   entry->bfib1.udp ? IPPROTO_UDP : IPPROTO_TCP,
 					   ipv6_sip0, ipv6_sip1,
 					   ipv6_sip2, ipv6_sip3,
 					   entry->ipv6_hnapt.sport,
@@ -1471,9 +1520,10 @@ static int __hnat_debug_show(struct seq_file *m, void *private, u32 ppe_id)
 
 			if (entry->ipv6_hnapt.eg_ipv6_dir == IPV6_SNAT) {
 				seq_printf(m,
-					   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|SIP=%08x:%08x:%08x:%08x->DIP=%08x:%08x:%08x:%08x|NEW_SIP=%08x:%08x:%08x:%08x->NEW_DIP=%08x:%08x:%08x:%08x|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
+					   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|prot=%d|SIP=%08x:%08x:%08x:%08x->DIP=%08x:%08x:%08x:%08x|NEW_SIP=%08x:%08x:%08x:%08x->NEW_DIP=%08x:%08x:%08x:%08x|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
 					   entry, ppe_id, ei(entry, end),
 					   es(entry), pt(entry),
+					   entry->bfib1.udp ? IPPROTO_UDP : IPPROTO_TCP,
 					   ipv6_sip0, ipv6_sip1,
 					   ipv6_sip2, ipv6_sip3,
 					   ipv6_dip0, ipv6_dip1,
@@ -1490,9 +1540,10 @@ static int __hnat_debug_show(struct seq_file *m, void *private, u32 ppe_id)
 					   entry->ipv6_hnapt.vlan2);
 			} else if (entry->ipv6_hnapt.eg_ipv6_dir == IPV6_DNAT) {
 				seq_printf(m,
-					   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|SIP=%08x:%08x:%08x:%08x->DIP=%08x:%08x:%08x:%08x|NEW_SIP=%08x:%08x:%08x:%08x->NEW_DIP=%08x:%08x:%08x:%08x|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
+					   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|prot=%d|SIP=%08x:%08x:%08x:%08x->DIP=%08x:%08x:%08x:%08x|NEW_SIP=%08x:%08x:%08x:%08x->NEW_DIP=%08x:%08x:%08x:%08x|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
 					   entry, ppe_id, ei(entry, end),
 					   es(entry), pt(entry),
+					   entry->bfib1.udp ? IPPROTO_UDP : IPPROTO_TCP,
 					   ipv6_sip0, ipv6_sip1,
 					   ipv6_sip2, ipv6_sip3,
 					   ipv6_dip0, ipv6_dip1,
@@ -1561,10 +1612,11 @@ static int __hnat_debug_show(struct seq_file *m, void *private, u32 ppe_id)
 				swab16(entry->ipv4_dslite.dmac_lo);
 			PRINT_COUNT(m, acct);
 			seq_printf(m,
-				   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|SIP=%pI4->DIP=%pI4|TSIP=%08x:%08x:%08x:%08x->TDIP=%08x:%08x:%08x:%08x|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
+				   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|prot=%d|SIP=%pI4->DIP=%pI4|TSIP=%08x:%08x:%08x:%08x->TDIP=%08x:%08x:%08x:%08x|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
 				   entry, ppe_id, ei(entry, end),
-				   es(entry), pt(entry), &saddr,
-				   &daddr, ipv6_tsip0, ipv6_tsip1, ipv6_tsip2,
+				   es(entry), pt(entry),
+				   entry->bfib1.udp ? IPPROTO_UDP : IPPROTO_TCP,
+				   &saddr, &daddr, ipv6_tsip0, ipv6_tsip1, ipv6_tsip2,
 				   ipv6_tsip3, ipv6_tdip0, ipv6_tdip1, ipv6_tdip2,
 				   ipv6_tdip3, h_source, h_dest,
 				   ntohs(entry->ipv4_dslite.sp_tag),
@@ -1595,9 +1647,10 @@ static int __hnat_debug_show(struct seq_file *m, void *private, u32 ppe_id)
 				swab16(entry->ipv4_mape.dmac_lo);
 			PRINT_COUNT(m, acct);
 			seq_printf(m,
-				   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|SIP=%pI4:%d->DIP=%pI4:%d|NSIP=%pI4:%d->NDIP=%pI4:%d|TSIP=%08x:%08x:%08x:%08x->TDIP=%08x:%08x:%08x:%08x|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
+				   "addr=0x%p|ppe=%d|index=%d|state=%s|type=%s|prot=%d|SIP=%pI4:%d->DIP=%pI4:%d|NSIP=%pI4:%d->NDIP=%pI4:%d|TSIP=%08x:%08x:%08x:%08x->TDIP=%08x:%08x:%08x:%08x|%pM=>%pM|sp_tag=0x%04x|info1=0x%x|info2=0x%x|vlan1=%d|vlan2=%d\n",
 				   entry, ppe_id, ei(entry, end),
 				   es(entry), pt(entry),
+				   entry->bfib1.udp ? IPPROTO_UDP : IPPROTO_TCP,
 				   &saddr, entry->ipv4_mape.sport,
 				   &daddr, entry->ipv4_mape.dport,
 				   &nsaddr, entry->ipv4_mape.new_sport,
@@ -3404,6 +3457,173 @@ static const struct file_operations hnat_static_fops = {
 	.release = single_release,
 };
 
+static int hnat_proto_3tuple_read(struct seq_file *m, void *private)
+{
+	u32 proto_chk;
+	u32 i, j;
+	u8 proto;
+	u8 blist;
+	bool first;
+
+	seq_puts(m, "Usage:\n");
+	seq_puts(m, "  echo $ppe_id $blist [$proto ...] > proto_3tuple\n");
+	seq_puts(m, "  echo $ppe_id ipv4|ipv6 $chk > proto_3tuple\n");
+	seq_puts(m, "\n");
+	seq_printf(m, "  $ppe_id : PPE index (0 ~ %d), or -1 for all\n", CFG_PPE_NUM - 1);
+	seq_puts(m, "  $blist  : 0 = whitelist, 1 = blacklist\n");
+	seq_puts(m, "  $proto  : IP protocol number (0~255); up to 16 entries\n");
+	seq_puts(m, "  $chk    : 16-bit bitmask (hex/dec/oct); bit[i] enables proto slot i\n");
+	seq_puts(m, "-------------------- HW current setting ----------------\n");
+	for (i = 0; i < CFG_PPE_NUM; i++) {
+		proto_chk = readl(hnat_priv->ppe_base[i] + PPE_IP_PROT_CHK);
+		blist = FIELD_GET(BIT_IP_PROT_CHK_BLIST,
+				  readl(hnat_priv->ppe_base[i] + PPE_FLOW_CFG));
+		seq_printf(m, "ppe=%d|blist=%d|proto=", i, blist);
+
+		first = true;
+		for (j = 0; j < 16; j++) {
+			if (!(proto_chk & BIT(j)) && !((proto_chk >> 16) & BIT(j)))
+				continue;
+
+			proto = (readl(hnat_priv->ppe_base[i] +
+				       PPE_IP_PROT_0 + 4 * (j / 4)) >> ((j % 4) * 8)) & 0xff;
+			seq_printf(m, "%s%d", first ? "" : " ", proto);
+			first = false;
+		}
+		if (first)
+			seq_puts(m, " (none)");
+		seq_puts(m, "\n");
+
+		seq_printf(m, "ipv4_chk=0x%04x|ipv6_chk=0x%04x\n",
+			   proto_chk & 0xffff,
+			   (proto_chk >> 16) & 0xffff);
+		seq_puts(m, "---------------------------------------------\n");
+	}
+
+	return 0;
+}
+
+static int hnat_proto_3tuple_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, hnat_proto_3tuple_read, file->private_data);
+}
+
+static ssize_t hnat_proto_3tuple_write(struct file *file,
+				       const char __user *buffer,
+				       size_t count, loff_t *data)
+{
+	char buf[256] = {0};
+	char *p_buf, *token;
+	u8 proto_list[16] = {0};
+	u32 prot_regs[4] = {0};
+	u32 ppe_start, ppe_end;
+	u32 blist, proto;
+	u32 chk = 0;
+	u32 num, i;
+	int ppe_id;
+
+	if (count >= sizeof(buf)) {
+		pr_err("input handling fail!\n");
+		return -EINVAL;
+	}
+
+	if (copy_from_user(buf, buffer, count))
+		return -EFAULT;
+
+	buf[count] = '\0';
+	p_buf = buf;
+
+	token = strsep(&p_buf, " \t");
+	if (!token || kstrtoint(token, 10, &ppe_id))
+		return -EINVAL;
+
+	if (ppe_id < -1 || ppe_id >= (int)CFG_PPE_NUM)
+		return -EINVAL;
+
+	ppe_start = (ppe_id == -1) ? 0 : (u32)ppe_id;
+	ppe_end = (ppe_id == -1) ? CFG_PPE_NUM : (u32)ppe_id + 1;
+
+	token = strsep(&p_buf, " \t");
+	if (!token)
+		return -EINVAL;
+
+	/* Sub-command: echo $ppe_id ipv4 $chk
+	 *              echo $ppe_id ipv6 $chk
+	 * Updates only PPE_IP_PROT_CHK bits[0:15] (ipv4) or bits[16:31] (ipv6).
+	 */
+	if (!strncmp(token, "ipv4", 4) || !strncmp(token, "ipv6", 4)) {
+		bool is_ipv4 = !strncmp(token, "ipv4", 4);
+		u32 cur_chk;
+
+		token = strsep(&p_buf, " \t");
+		if (!token || kstrtou32(token, 0, &chk))
+			return -EINVAL;
+
+		chk &= 0xffff;
+
+		for (i = ppe_start; i < ppe_end; i++) {
+			cur_chk = readl(hnat_priv->ppe_base[i] + PPE_IP_PROT_CHK);
+			if (is_ipv4) {
+				cur_chk = (cur_chk & 0xffff0000) | chk;
+				hnat_priv->prot_3t[i].ipv4_chk = (u16)chk;
+			} else {
+				cur_chk = (cur_chk & 0x0000ffff) | (chk << 16);
+				hnat_priv->prot_3t[i].ipv6_chk = (u16)chk;
+			}
+			writel(cur_chk, hnat_priv->ppe_base[i] + PPE_IP_PROT_CHK);
+		}
+
+		return count;
+	}
+
+	/* Full command: echo $ppe_id $blist $proto0 ... $proto15
+	 * The token already consumed above is the blist value.
+	 */
+	if (kstrtou32(token, 10, &blist) || blist > 1)
+		return -EINVAL;
+
+	for (num = 0; num < 16; num++) {
+		token = strsep(&p_buf, " \t");
+		if (!token)
+			break;
+
+		if (kstrtou32(token, 10, &proto))
+			return -EINVAL;
+
+		proto_list[num] = proto & 0xff;
+		prot_regs[num / 4] |= (proto & 0xff) << ((num % 4) * 8);
+
+		chk |= BIT(num);
+	}
+
+	for (i = ppe_start; i < ppe_end; i++) {
+		cr_set_field(hnat_priv->ppe_base[i] + PPE_FLOW_CFG,
+			     BIT_IP_PROT_CHK_BLIST, blist);
+		writel(chk | (chk << 16),
+		       hnat_priv->ppe_base[i] + PPE_IP_PROT_CHK);
+		writel(prot_regs[0], hnat_priv->ppe_base[i] + PPE_IP_PROT_0);
+		writel(prot_regs[1], hnat_priv->ppe_base[i] + PPE_IP_PROT_1);
+		writel(prot_regs[2], hnat_priv->ppe_base[i] + PPE_IP_PROT_2);
+		writel(prot_regs[3], hnat_priv->ppe_base[i] + PPE_IP_PROT_3);
+
+		hnat_priv->prot_3t[i].blist = blist;
+		hnat_priv->prot_3t[i].num = num;
+		hnat_priv->prot_3t[i].ipv4_chk = (u16)chk;
+		hnat_priv->prot_3t[i].ipv6_chk = (u16)chk;
+		memcpy(hnat_priv->prot_3t[i].proto, proto_list, sizeof(proto_list));
+	}
+
+	return count;
+}
+
+static const struct file_operations hnat_proto_3tuple_fops = {
+	.open = hnat_proto_3tuple_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.write = hnat_proto_3tuple_write,
+	.release = single_release,
+};
+
 int get_ppe_mib(u32 ppe_id, int index, u64 *pkt_cnt, u64 *byte_cnt)
 {
 	struct mtk_hnat *h = hnat_priv;
@@ -3561,6 +3781,8 @@ int hnat_init_debugfs(struct mtk_hnat *h)
 			    &hnat_l2br_toggle_fops);
 	debugfs_create_file("l4s_toggle", 0444, root, h,
 			    &hnat_l4s_toggle_fops);
+	debugfs_create_file("proto_3tuple", 0644, root, h,
+			    &hnat_proto_3tuple_fops);
 
 	/* init manual_api debugfs node */
 	hnat_api_init_debugfs(root);

@@ -1,10 +1,12 @@
 ---
-[v11] net: ethernet: mtk_eth_soc: support proprietary debugfs
+[v12] net: ethernet: mtk_eth_soc: support proprietary debugfs
 
 Add comprehensive proprietary debugfs support for MTK Ethernet driver. This
 provides extensive debugging interfaces for register access, statistics,
 configuration inspection, and hardware state monitoring.
 ---
+v12: Refactor mac_cnt and xfi_cnt commands to ensure that they can read the
+     MIB counters.
 v11: Refactor phy_read_mmd/phy_write_mmd support for mii_mgr_cl45 command.
 v10: Correct the typo in displaying the physical address of DMADs for the
      rx_ring debug command.
@@ -20,21 +22,23 @@ v2: Add QDMA queue and scheduler control.
 v1: Add proprietary debugfs for mtk_eth.
 ---
 
-From 1d9311b4eadf79c458a379eae7ebddf273c25128 Mon Sep 17 00:00:00 2001
+From 5ed4a839025d85d700df444def7e43640edacf91 Mon Sep 17 00:00:00 2001
 From: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
-Date: Tue, 2 Dec 2025 13:53:08 +0800
+Date: Wed, 22 Apr 2026 12:55:41 +0800
 Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
 
 ---
  drivers/net/ethernet/mediatek/Makefile      |    2 +-
- drivers/net/ethernet/mediatek/mtk_eth_dbg.c | 2642 +++++++++++++++++++
- drivers/net/ethernet/mediatek/mtk_eth_dbg.h |  458 ++++
- drivers/net/ethernet/mediatek/mtk_eth_soc.c |   41 +-
+ drivers/net/ethernet/mediatek/mtk_eth_dbg.c | 2750 +++++++++++++++++++
+ drivers/net/ethernet/mediatek/mtk_eth_dbg.h |  533 ++++
+ drivers/net/ethernet/mediatek/mtk_eth_soc.c |   46 +-
  drivers/net/ethernet/mediatek/mtk_eth_soc.h |   15 +
- 5 files changed, 3150 insertions(+), 8 deletions(-)
+ 5 files changed, 3338 insertions(+), 8 deletions(-)
  create mode 100644 drivers/net/ethernet/mediatek/mtk_eth_dbg.c
  create mode 100644 drivers/net/ethernet/mediatek/mtk_eth_dbg.h
 
+diff --git a/drivers/net/ethernet/mediatek/Makefile b/drivers/net/ethernet/mediatek/Makefile
+index e9764b4..ef31f65 100644
 --- a/drivers/net/ethernet/mediatek/Makefile
 +++ b/drivers/net/ethernet/mediatek/Makefile
 @@ -4,7 +4,7 @@
@@ -46,9 +50,12 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  mtk_eth-$(CONFIG_NET_MEDIATEK_SOC_WED) += mtk_wed.o mtk_wed_mcu.o mtk_wed_wo.o
  ifdef CONFIG_DEBUG_FS
  mtk_eth-$(CONFIG_NET_MEDIATEK_SOC_WED) += mtk_wed_debugfs.o
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_dbg.c b/drivers/net/ethernet/mediatek/mtk_eth_dbg.c
+new file mode 100644
+index 0000000..08cd2d4
 --- /dev/null
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_dbg.c
-@@ -0,0 +1,2642 @@
+@@ -0,0 +1,2750 @@
 +/*
 + *   Copyright (C) 2025 MediaTek Inc.
 + *
@@ -77,6 +84,9 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
 +#include "mtk_eth_soc.h"
 +#include "mtk_eth_dbg.h"
 +#include "mtk_wed_regs.h"
++
++static struct mtk_gmac_hw_stats gmac_hw_stats[MTK_MAX_DEVS];
++static struct mtk_xmac_hw_stats xmac_hw_stats[MTK_MAX_DEVS];
 +
 +static int mtk_qdma_pppq_show(struct seq_file *m, void *v)
 +{
@@ -1019,32 +1029,72 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
 +
 +static void mtk_mac_mib_dump(struct seq_file *m, u32 gdm_id)
 +{
-+	struct mtk_eth *eth = m->private;
++	PRINT_FORMATTED_MAC_MIB(m, TX_UC_BYTE_CNT, tx_uc_bytes);
++	PRINT_FORMATTED_MAC_MIB(m, TX_UC_PKT_CNT, tx_uc_packets);
++	PRINT_FORMATTED_MAC_MIB(m, TX_MC_BYTE_CNT, tx_mc_bytes);
++	PRINT_FORMATTED_MAC_MIB(m, TX_MC_PKT_CNT, tx_mc_packets);
++	PRINT_FORMATTED_MAC_MIB(m, TX_BC_BYTE_CNT, tx_bc_bytes);
++	PRINT_FORMATTED_MAC_MIB(m, TX_BC_PKT_CNT, tx_bc_packets);
 +
-+	PRINT_FORMATTED_MAC_MIB64(m, TX_UC_PKT_CNT);
-+	PRINT_FORMATTED_MAC_MIB64(m, TX_UC_BYTE_CNT);
-+	PRINT_FORMATTED_MAC_MIB64(m, TX_MC_PKT_CNT);
-+	PRINT_FORMATTED_MAC_MIB64(m, TX_MC_BYTE_CNT);
-+	PRINT_FORMATTED_MAC_MIB64(m, TX_BC_PKT_CNT);
-+	PRINT_FORMATTED_MAC_MIB64(m, TX_BC_BYTE_CNT);
++	PRINT_FORMATTED_MAC_MIB(m, RX_UC_BYTE_CNT, rx_uc_bytes);
++	PRINT_FORMATTED_MAC_MIB(m, RX_UC_PKT_CNT, rx_uc_packets);
++	PRINT_FORMATTED_MAC_MIB(m, RX_MC_BYTE_CNT, rx_mc_bytes);
++	PRINT_FORMATTED_MAC_MIB(m, RX_MC_PKT_CNT, rx_mc_packets);
++	PRINT_FORMATTED_MAC_MIB(m, RX_BC_BYTE_CNT, rx_bc_bytes);
++	PRINT_FORMATTED_MAC_MIB(m, RX_BC_PKT_CNT, rx_bc_packets);
++}
 +
-+	PRINT_FORMATTED_MAC_MIB64(m, RX_UC_PKT_CNT);
-+	PRINT_FORMATTED_MAC_MIB64(m, RX_UC_BYTE_CNT);
-+	PRINT_FORMATTED_MAC_MIB64(m, RX_MC_PKT_CNT);
-+	PRINT_FORMATTED_MAC_MIB64(m, RX_MC_BYTE_CNT);
-+	PRINT_FORMATTED_MAC_MIB64(m, RX_BC_PKT_CNT);
-+	PRINT_FORMATTED_MAC_MIB64(m, RX_BC_BYTE_CNT);
++void mtk_mac_mib_update(struct mtk_mac *mac, struct mtk_hw_stats *prev,
++			struct mtk_hw_stats *cur)
++{
++	struct mtk_eth *eth = mac->hw;
++
++	if (!mtk_is_netsys_v3_or_greater(eth))
++		return;
++
++	gmac_hw_stats[mac->id].tx_uc_packets +=
++		cur->tx_unicast_packets - prev->tx_unicast_packets;
++	gmac_hw_stats[mac->id].tx_uc_bytes +=
++		cur->tx_unicast_bytes - prev->tx_unicast_bytes;
++	gmac_hw_stats[mac->id].tx_mc_packets +=
++		cur->tx_multicast_packets - prev->tx_multicast_packets;
++	gmac_hw_stats[mac->id].tx_mc_bytes +=
++		cur->tx_multicast_bytes - prev->tx_multicast_bytes;
++	gmac_hw_stats[mac->id].tx_bc_packets +=
++		cur->tx_broadcast_packets - prev->tx_broadcast_packets;
++	gmac_hw_stats[mac->id].tx_bc_bytes +=
++		cur->tx_broadcast_bytes - prev->tx_broadcast_bytes;
++
++	gmac_hw_stats[mac->id].rx_uc_packets +=
++		cur->rx_unicast_packets - prev->rx_unicast_packets;
++	gmac_hw_stats[mac->id].rx_uc_bytes +=
++		cur->rx_unicast_bytes - prev->rx_unicast_bytes;
++	gmac_hw_stats[mac->id].rx_mc_packets +=
++		cur->rx_multicast_packets - prev->rx_multicast_packets;
++	gmac_hw_stats[mac->id].rx_mc_bytes +=
++		cur->rx_multicast_bytes - prev->rx_multicast_bytes;
++	gmac_hw_stats[mac->id].rx_bc_packets +=
++		cur->rx_broadcast_packets - prev->rx_broadcast_packets;
++	gmac_hw_stats[mac->id].rx_bc_bytes +=
++		cur->rx_broadcast_bytes - prev->rx_broadcast_bytes;
 +}
 +
 +static int mtk_eth_debugfs_mac_cnt_show(struct seq_file *m, void *v)
 +{
++	struct mtk_eth *eth = m->private;
 +	int i;
 +
 +	seq_puts(m, "+------------------------------------+\n");
 +	seq_puts(m, "|              <<GMAC>>              |\n");
 +
 +	for (i = MTK_GMAC1_ID; i < MTK_GMAC_ID_MAX; i++) {
++		if (mtk_interface_mode_is_xgmii(eth->mac[i]->interface))
++			continue;
++
++		spin_lock(&eth->mac[i]->hw_stats->stats_lock);
 +		mtk_mac_mib_dump(m, i);
++		memset(&gmac_hw_stats[i], 0, sizeof(struct mtk_gmac_hw_stats));
++		spin_unlock(&eth->mac[i]->hw_stats->stats_lock);
 +		seq_puts(m, "|                                    |\n");
 +	}
 +
@@ -1063,28 +1113,88 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
 +{
 +	struct mtk_eth *eth = m->private;
 +
-+	PRINT_FORMATTED_XFI_MIB(m, TX_PKT_CNT, GENMASK(31, 0));
-+	PRINT_FORMATTED_XFI_MIB(m, TX_ETH_CNT, GENMASK(31, 0));
-+	PRINT_FORMATTED_XFI_MIB(m, TX_PAUSE_CNT, GENMASK(15, 0));
-+	PRINT_FORMATTED_XFI_MIB(m, TX_BYTE_CNT, GENMASK(31, 0));
-+	PRINT_FORMATTED_XFI_MIB64(m, TX_UC_PKT_CNT);
-+	PRINT_FORMATTED_XFI_MIB64(m, TX_MC_PKT_CNT);
-+	PRINT_FORMATTED_XFI_MIB64(m, TX_BC_PKT_CNT);
++	PRINT_FORMATTED_XFI_MIB(m, TX_BYTE_CNT, tx_bytes);
++	PRINT_FORMATTED_XFI_MIB(m, TX_PKT_CNT, tx_packets);
++	PRINT_FORMATTED_XFI_MIB(m, TX_ETH_CNT, tx_eth_packets);
++	PRINT_FORMATTED_XFI_MIB(m, TX_PAUSE_CNT, tx_pause_packets);
++	PRINT_FORMATTED_XFI_MIB(m, TX_UC_BYTE_CNT, tx_uc_bytes);
++	PRINT_FORMATTED_XFI_MIB(m, TX_UC_PKT_CNT, tx_uc_packets);
++	PRINT_FORMATTED_XFI_MIB(m, TX_MC_BYTE_CNT, tx_mc_bytes);
++	PRINT_FORMATTED_XFI_MIB(m, TX_MC_PKT_CNT, tx_mc_packets);
++	PRINT_FORMATTED_XFI_MIB(m, TX_BC_BYTE_CNT, tx_bc_bytes);
++	PRINT_FORMATTED_XFI_MIB(m, TX_BC_PKT_CNT, tx_bc_packets);
 +
-+	PRINT_FORMATTED_XFI_MIB(m, RX_PKT_CNT, GENMASK(31, 0));
-+	PRINT_FORMATTED_XFI_MIB(m, RX_ETH_CNT, GENMASK(31, 0));
-+	PRINT_FORMATTED_XFI_MIB(m, RX_PAUSE_CNT, GENMASK(15, 0));
-+	PRINT_FORMATTED_XFI_MIB(m, RX_LEN_ERR_CNT, GENMASK(15, 0));
-+	PRINT_FORMATTED_XFI_MIB(m, RX_CRC_ERR_CNT, GENMASK(15, 0));
++	PRINT_FORMATTED_XFI_MIB(m, RX_BYTE_CNT, rx_bytes);
++	PRINT_FORMATTED_XFI_MIB(m, RX_PKT_CNT, rx_packets);
++	PRINT_FORMATTED_XFI_MIB(m, RX_ETH_CNT, rx_eth_packets);
++	PRINT_FORMATTED_XFI_MIB(m, RX_PAUSE_CNT, rx_pause_packets);
++	PRINT_FORMATTED_XFI_MIB(m, RX_LEN_ERR_CNT, rx_lenerr_packets);
++	PRINT_FORMATTED_XFI_MIB(m, RX_CRC_ERR_CNT, rx_crcerr_packets);
 +	if (eth->soc->caps != MT7988_CAPS)
-+		PRINT_FORMATTED_XFI_MIB(m, RX_RUNT_PKT_CNT, GENMASK(31, 0));
-+	PRINT_FORMATTED_XFI_MIB64(m, RX_UC_PKT_CNT);
-+	PRINT_FORMATTED_XFI_MIB64(m, RX_MC_PKT_CNT);
-+	PRINT_FORMATTED_XFI_MIB64(m, RX_BC_PKT_CNT);
-+	PRINT_FORMATTED_XFI_MIB(m, RX_UC_DROP_CNT, GENMASK(31, 0));
-+	PRINT_FORMATTED_XFI_MIB(m, RX_BC_DROP_CNT, GENMASK(31, 0));
-+	PRINT_FORMATTED_XFI_MIB(m, RX_MC_DROP_CNT, GENMASK(31, 0));
-+	PRINT_FORMATTED_XFI_MIB(m, RX_ALL_DROP_CNT, GENMASK(31, 0));
++		PRINT_FORMATTED_XFI_MIB(m, RX_RUNT_PKT_CNT, rx_runt_packets);
++	PRINT_FORMATTED_XFI_MIB(m, RX_UC_BYTE_CNT, rx_uc_bytes);
++	PRINT_FORMATTED_XFI_MIB(m, RX_UC_PKT_CNT, rx_uc_packets);
++	PRINT_FORMATTED_XFI_MIB(m, RX_MC_BYTE_CNT, rx_mc_bytes);
++	PRINT_FORMATTED_XFI_MIB(m, RX_MC_PKT_CNT, rx_mc_packets);
++	PRINT_FORMATTED_XFI_MIB(m, RX_BC_BYTE_CNT, rx_bc_bytes);
++	PRINT_FORMATTED_XFI_MIB(m, RX_BC_PKT_CNT, rx_bc_packets);
++	PRINT_FORMATTED_XFI_MIB(m, RX_UC_DROP_CNT, rx_uc_drop);
++	PRINT_FORMATTED_XFI_MIB(m, RX_BC_DROP_CNT, rx_mc_drop);
++	PRINT_FORMATTED_XFI_MIB(m, RX_MC_DROP_CNT, rx_bc_drop);
++	PRINT_FORMATTED_XFI_MIB(m, RX_ALL_DROP_CNT, rx_all_drop);
++}
++
++void mtk_xfi_mib_update(struct mtk_mac *mac)
++{
++	struct mtk_eth *eth = mac->hw;
++
++	if (!mtk_is_netsys_v3_or_greater(eth))
++		return;
++
++	xmac_hw_stats[mac->id].tx_packets +=
++		XFI_MIB_READ32(mac->id, TX_PKT_CNT, GENMASK(31, 0));
++	xmac_hw_stats[mac->id].tx_bytes +=
++		XFI_MIB_READ32(mac->id, TX_BYTE_CNT, GENMASK(31, 0));
++	xmac_hw_stats[mac->id].tx_eth_packets +=
++		XFI_MIB_READ32(mac->id, TX_ETH_CNT, GENMASK(31, 0));
++	xmac_hw_stats[mac->id].tx_pause_packets +=
++		XFI_MIB_READ32(mac->id, TX_PAUSE_CNT, GENMASK(15, 0));
++	xmac_hw_stats[mac->id].tx_uc_packets += XFI_MIB_READ64(mac->id, TX_UC_PKT_CNT);
++	xmac_hw_stats[mac->id].tx_uc_bytes += XFI_MIB_READ64(mac->id, TX_UC_BYTE_CNT);
++	xmac_hw_stats[mac->id].tx_mc_packets += XFI_MIB_READ64(mac->id, TX_MC_PKT_CNT);
++	xmac_hw_stats[mac->id].tx_mc_bytes += XFI_MIB_READ64(mac->id, TX_MC_BYTE_CNT);
++	xmac_hw_stats[mac->id].tx_bc_packets += XFI_MIB_READ64(mac->id, TX_BC_PKT_CNT);
++	xmac_hw_stats[mac->id].tx_bc_bytes += XFI_MIB_READ64(mac->id, TX_BC_BYTE_CNT);
++
++	xmac_hw_stats[mac->id].rx_packets +=
++		XFI_MIB_READ32(mac->id, RX_PKT_CNT, GENMASK(31, 0));
++	xmac_hw_stats[mac->id].rx_bytes +=
++		XFI_MIB_READ32(mac->id, RX_BYTE_CNT, GENMASK(31, 0));
++	xmac_hw_stats[mac->id].rx_eth_packets +=
++		XFI_MIB_READ32(mac->id, RX_ETH_CNT, GENMASK(31, 0));
++	xmac_hw_stats[mac->id].rx_pause_packets +=
++		XFI_MIB_READ32(mac->id, RX_PAUSE_CNT, GENMASK(15, 0));
++	xmac_hw_stats[mac->id].rx_lenerr_packets +=
++		XFI_MIB_READ32(mac->id, RX_LEN_ERR_CNT, GENMASK(15, 0));
++	xmac_hw_stats[mac->id].rx_crcerr_packets +=
++		XFI_MIB_READ32(mac->id, RX_CRC_ERR_CNT, GENMASK(15, 0));
++	if (eth->soc->caps != MT7988_CAPS)
++		xmac_hw_stats[mac->id].rx_runt_packets +=
++			XFI_MIB_READ32(mac->id, RX_RUNT_PKT_CNT, GENMASK(15, 0));
++	xmac_hw_stats[mac->id].rx_uc_packets += XFI_MIB_READ64(mac->id, RX_UC_PKT_CNT);
++	xmac_hw_stats[mac->id].rx_uc_bytes += XFI_MIB_READ64(mac->id, RX_UC_BYTE_CNT);
++	xmac_hw_stats[mac->id].rx_mc_packets += XFI_MIB_READ64(mac->id, RX_MC_PKT_CNT);
++	xmac_hw_stats[mac->id].rx_mc_bytes += XFI_MIB_READ64(mac->id, RX_MC_BYTE_CNT);
++	xmac_hw_stats[mac->id].rx_bc_packets += XFI_MIB_READ64(mac->id, RX_BC_PKT_CNT);
++	xmac_hw_stats[mac->id].rx_bc_bytes += XFI_MIB_READ64(mac->id, RX_BC_BYTE_CNT);
++	xmac_hw_stats[mac->id].rx_uc_drop +=
++		XFI_MIB_READ32(mac->id, RX_UC_DROP_CNT, GENMASK(31, 0));
++	xmac_hw_stats[mac->id].rx_mc_drop +=
++		XFI_MIB_READ32(mac->id, RX_MC_DROP_CNT, GENMASK(31, 0));
++	xmac_hw_stats[mac->id].rx_bc_drop +=
++		XFI_MIB_READ32(mac->id, RX_BC_DROP_CNT, GENMASK(31, 0));
++	xmac_hw_stats[mac->id].rx_all_drop +=
++		XFI_MIB_READ32(mac->id, RX_ALL_DROP_CNT, GENMASK(31, 0));
 +}
 +
 +static int mtk_eth_debugfs_xfi_cnt_show(struct seq_file *m, void *v)
@@ -1096,8 +1206,13 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
 +	seq_puts(m, "|             <<XFI MAC>>            |\n");
 +
 +	for (i = MTK_GMAC2_ID; i < MTK_GMAC_ID_MAX; i++) {
++		if (!mtk_interface_mode_is_xgmii(eth->mac[i]->interface))
++			continue;
++
++		spin_lock(&eth->mac[i]->hw_stats->stats_lock);
 +		mtk_xfi_mib_dump(m, i);
-+		mtk_m32(eth, 0x1, 0x1, MTK_XFI_MIB_BASE(i) + MTK_XFI_CNT_CTRL);
++		memset(&xmac_hw_stats[i], 0, sizeof(struct mtk_xmac_hw_stats));
++		spin_unlock(&eth->mac[i]->hw_stats->stats_lock);
 +		seq_puts(m, "|                                    |\n");
 +	}
 +
@@ -2691,9 +2806,12 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
 +	debugfs_remove_recursive(eth->debugfs->root);
 +	remove_proc_subtree(PROCREG_DIR, eth->debugfs->procfs_root);
 +}
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_dbg.h b/drivers/net/ethernet/mediatek/mtk_eth_dbg.h
+new file mode 100644
+index 0000000..89c5870
 --- /dev/null
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_dbg.h
-@@ -0,0 +1,458 @@
+@@ -0,0 +1,533 @@
 +/*
 + *   Copyright (C) 2025 MediaTek Inc.
 + *
@@ -2745,27 +2863,27 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
 +#define MTK_MAC_RX_UC_PKT_CNT_L		0x00
 +#define MTK_MAC_RX_UC_PKT_CNT_H		0x04
 +#define MTK_MAC_RX_UC_BYTE_CNT_L	0x08
-+#define MTK_MAC_RX_UC_BYTE_CNT_H	0x0C
++#define MTK_MAC_RX_UC_BYTE_CNT_H	0x0c
 +#define MTK_MAC_RX_MC_PKT_CNT_L		0x10
 +#define MTK_MAC_RX_MC_PKT_CNT_H		0x14
 +#define MTK_MAC_RX_MC_BYTE_CNT_L	0x18
-+#define MTK_MAC_RX_MC_BYTE_CNT_H	0x1C
++#define MTK_MAC_RX_MC_BYTE_CNT_H	0x1c
 +#define MTK_MAC_RX_BC_PKT_CNT_L		0x20
 +#define MTK_MAC_RX_BC_PKT_CNT_H		0x24
 +#define MTK_MAC_RX_BC_BYTE_CNT_L	0x28
-+#define MTK_MAC_RX_BC_BYTE_CNT_H	0x2C
++#define MTK_MAC_RX_BC_BYTE_CNT_H	0x2c
 +#define MTK_MAC_TX_UC_PKT_CNT_L		0x30
 +#define MTK_MAC_TX_UC_PKT_CNT_H		0x34
 +#define MTK_MAC_TX_UC_BYTE_CNT_L	0x38
-+#define MTK_MAC_TX_UC_BYTE_CNT_H	0x3C
++#define MTK_MAC_TX_UC_BYTE_CNT_H	0x3c
 +#define MTK_MAC_TX_MC_PKT_CNT_L		0x40
 +#define MTK_MAC_TX_MC_PKT_CNT_H		0x44
 +#define MTK_MAC_TX_MC_BYTE_CNT_L	0x48
-+#define MTK_MAC_TX_MC_BYTE_CNT_H	0x4C
++#define MTK_MAC_TX_MC_BYTE_CNT_H	0x4c
 +#define MTK_MAC_TX_BC_PKT_CNT_L		0x50
 +#define MTK_MAC_TX_BC_PKT_CNT_H		0x54
 +#define MTK_MAC_TX_BC_BYTE_CNT_L	0x58
-+#define MTK_MAC_TX_BC_BYTE_CNT_H	0x5C
++#define MTK_MAC_TX_BC_BYTE_CNT_H	0x5c
 +
 +/* XFI MAC MIB Register */
 +#define MTK_XFI_MIB_BASE(x)		(MTK_XMAC_MCR(x))
@@ -2776,55 +2894,81 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
 +#define MTK_XFI_TX_BYTE_CNT		0x134
 +#define MTK_XFI_TX_UC_PKT_CNT_L		0x150
 +#define MTK_XFI_TX_UC_PKT_CNT_H		0x154
++#define MTK_XFI_TX_UC_BYTE_CNT_L	0x158
++#define MTK_XFI_TX_UC_BYTE_CNT_H	0x15c
 +#define MTK_XFI_TX_MC_PKT_CNT_L		0x160
 +#define MTK_XFI_TX_MC_PKT_CNT_H		0x164
++#define MTK_XFI_TX_MC_BYTE_CNT_L	0x168
++#define MTK_XFI_TX_MC_BYTE_CNT_H	0x16c
 +#define MTK_XFI_TX_BC_PKT_CNT_L		0x170
 +#define MTK_XFI_TX_BC_PKT_CNT_H		0x174
++#define MTK_XFI_TX_BC_BYTE_CNT_L	0x178
++#define MTK_XFI_TX_BC_BYTE_CNT_H	0x17c
 +
 +#define MTK_XFI_RX_PKT_CNT		0x188
-+#define MTK_XFI_RX_ETH_CNT		0x18C
++#define MTK_XFI_RX_ETH_CNT		0x18c
 +#define MTK_XFI_RX_PAUSE_CNT		0x190
 +#define MTK_XFI_RX_LEN_ERR_CNT		0x194
 +#define MTK_XFI_RX_CRC_ERR_CNT		0x198
-+#define MTK_XFI_RX_RUNT_PKT_CNT		0x1BC
-+#define MTK_XFI_RX_UC_PKT_CNT_L		0x1C0
-+#define MTK_XFI_RX_UC_PKT_CNT_H		0x1C4
-+#define MTK_XFI_RX_MC_PKT_CNT_L		0x1D0
-+#define MTK_XFI_RX_MC_PKT_CNT_H		0x1D4
-+#define MTK_XFI_RX_BC_PKT_CNT_L		0x1E0
-+#define MTK_XFI_RX_BC_PKT_CNT_H		0x1E4
++#define MTK_XFI_RX_BYTE_CNT		0x1ac
++#define MTK_XFI_RX_RUNT_PKT_CNT		0x1bc
++#define MTK_XFI_RX_UC_PKT_CNT_L		0x1c0
++#define MTK_XFI_RX_UC_PKT_CNT_H		0x1c4
++#define MTK_XFI_RX_UC_BYTE_CNT_L	0x1c8
++#define MTK_XFI_RX_UC_BYTE_CNT_H	0x1cc
++#define MTK_XFI_RX_MC_PKT_CNT_L		0x1d0
++#define MTK_XFI_RX_MC_PKT_CNT_H		0x1d4
++#define MTK_XFI_RX_MC_BYTE_CNT_L	0x1d8
++#define MTK_XFI_RX_MC_BYTE_CNT_H	0x1dc
++#define MTK_XFI_RX_BC_PKT_CNT_L		0x1e0
++#define MTK_XFI_RX_BC_PKT_CNT_H		0x1e4
++#define MTK_XFI_RX_BC_BYTE_CNT_L	0x1e8
++#define MTK_XFI_RX_BC_BYTE_CNT_H	0x1ec
 +#define MTK_XFI_RX_UC_DROP_CNT		0x200
 +#define MTK_XFI_RX_BC_DROP_CNT		0x204
 +#define MTK_XFI_RX_MC_DROP_CNT		0x208
-+#define MTK_XFI_RX_ALL_DROP_CNT		0x20C
++#define MTK_XFI_RX_ALL_DROP_CNT		0x20c
 +
-+#define PRINT_FORMATTED_MAC_MIB64(m, reg)			\
++#define MAC_MIB_READ32(id, reg, mask)				\
++({								\
++	FIELD_GET(mask, mtk_r32(eth, MTK_MAC_MIB_BASE(id) +	\
++				MTK_MAC_##reg##_L) +		\
++})
++
++#define MAC_MIB_READ64(id, reg, mask)				\
++({								\
++	mtk_r32(eth, MTK_MAC_MIB_BASE(id) +			\
++		MTK_MAC_##reg##_L) +				\
++	((u64)mtk_r32(eth, MTK_MAC_MIB_BASE(id) +		\
++		      MTK_MAC_##reg##_H) << 32);		\
++})
++
++#define PRINT_FORMATTED_MAC_MIB(m, reg, field)			\
 +({								\
 +	seq_printf(m, "| MAC%d_%s	: %010llu |\n",		\
 +		   gdm_id + 1, #reg,				\
-+		   mtk_r32(eth, MTK_MAC_MIB_BASE(gdm_id) +	\
-+			   MTK_MAC_##reg##_L) +			\
-+		   ((u64)mtk_r32(eth, MTK_MAC_MIB_BASE(gdm_id) +\
-+				 MTK_MAC_##reg##_H) << 32));	\
++		   gmac_hw_stats[gdm_id].field);		\
 +})
 +
-+#define PRINT_FORMATTED_XFI_MIB(m, reg, mask)			\
++#define XFI_MIB_READ32(id, reg, mask)				\
 +({								\
-+	seq_printf(m, "| XFI%d_%s	: %010lu |\n",		\
-+		   gdm_id, #reg,				\
-+		   FIELD_GET(mask, mtk_r32(eth,			\
-+			     MTK_XFI_MIB_BASE(gdm_id) +		\
-+			     MTK_XFI_##reg)));			\
++	FIELD_GET(mask, mtk_r32(eth, MTK_XFI_MIB_BASE(id) +	\
++				MTK_XFI_##reg));		\
 +})
 +
-+#define PRINT_FORMATTED_XFI_MIB64(m, reg)			\
++#define XFI_MIB_READ64(id, reg)					\
++({								\
++	mtk_r32(eth, MTK_XFI_MIB_BASE(id) +			\
++		MTK_XFI_##reg##_L) +				\
++	((u64)mtk_r32(eth, MTK_XFI_MIB_BASE(id) +		\
++		      MTK_XFI_##reg##_H) << 32);		\
++})
++
++#define PRINT_FORMATTED_XFI_MIB(m, reg, field)			\
 +({								\
 +	seq_printf(m, "| XFI%d_%s	: %010llu |\n",		\
 +		   gdm_id, #reg,				\
-+		   mtk_r32(eth, MTK_XFI_MIB_BASE(gdm_id) +	\
-+			   MTK_XFI_##reg##_L) +			\
-+		   ((u64)mtk_r32(eth, MTK_XFI_MIB_BASE(gdm_id) +\
-+				 MTK_XFI_##reg##_H) << 32));	\
++		   xmac_hw_stats[gdm_id].field);		\
 +})
 +
 +/* HW LRO flush reason */
@@ -3120,6 +3264,51 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
 +	long		id;
 +};
 +
++struct mtk_gmac_hw_stats {
++	u64 tx_uc_packets;
++	u64 tx_uc_bytes;
++	u64 tx_mc_packets;
++	u64 tx_mc_bytes;
++	u64 tx_bc_packets;
++	u64 tx_bc_bytes;
++	u64 rx_uc_packets;
++	u64 rx_uc_bytes;
++	u64 rx_mc_packets;
++	u64 rx_mc_bytes;
++	u64 rx_bc_packets;
++	u64 rx_bc_bytes;
++};
++
++struct mtk_xmac_hw_stats {
++	u64 tx_packets;
++	u64 tx_bytes;
++	u64 tx_eth_packets;
++	u64 tx_pause_packets;
++	u64 tx_uc_packets;
++	u64 tx_uc_bytes;
++	u64 tx_mc_packets;
++	u64 tx_mc_bytes;
++	u64 tx_bc_packets;
++	u64 tx_bc_bytes;
++	u64 rx_packets;
++	u64 rx_bytes;
++	u64 rx_eth_packets;
++	u64 rx_pause_packets;
++	u64 rx_lenerr_packets;
++	u64 rx_crcerr_packets;
++	u64 rx_runt_packets;
++	u64 rx_uc_packets;
++	u64 rx_uc_bytes;
++	u64 rx_mc_packets;
++	u64 rx_mc_bytes;
++	u64 rx_bc_packets;
++	u64 rx_bc_bytes;
++	u64 rx_uc_drop;
++	u64 rx_mc_drop;
++	u64 rx_bc_drop;
++	u64 rx_all_drop;
++};
++
 +struct mtk_eth_debugfs {
 +	struct dentry			*root;
 +	struct proc_dir_entry		*procfs_root;
@@ -3141,6 +3330,10 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
 +extern void mtk_switch_w32(struct mtk_eth *eth, u32 val, unsigned int reg);
 +extern u32 mtk_switch_r32(struct mtk_eth *eth, unsigned int reg);
 +
++void mtk_mac_mib_update(struct mtk_mac *mac, struct mtk_hw_stats *prev,
++			struct mtk_hw_stats *cur);
++void mtk_xfi_mib_update(struct mtk_mac *mac);
++
 +void mtk_eth_debugfs_hwlro_stats_update(struct mtk_eth *eth, u32 ring_no,
 +					struct mtk_rx_dma_v2 *rxd);
 +void mtk_eth_debugfs_hwlro_flush_stats_update(struct mtk_eth *eth, u32 ring_no,
@@ -3152,6 +3345,8 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
 +void mtk_eth_debugfs_exit(struct mtk_eth *eth);
 +
 +#endif /* MTK_ETH_DBG_H */
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+index 813a7e1..baa3fdb 100644
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 @@ -36,6 +36,7 @@
@@ -3162,7 +3357,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  #include "mtk_wed.h"
  
  static int mtk_msg_level = -1;
-@@ -87,9 +88,11 @@ static const struct mtk_reg_map mtk_reg_
+@@ -87,9 +88,11 @@ static const struct mtk_reg_map mtk_reg_map = {
  		.fc_th		= 0x1a10,
  		.tx_sch_rate	= 0x1a14,
  		.int_grp	= 0x1a20,
@@ -3174,7 +3369,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  		.crx_ptr	= 0x1b10,
  		.drx_ptr	= 0x1b14,
  		.fq_head	= 0x1b20,
-@@ -117,6 +120,7 @@ static const struct mtk_reg_map mt7628_r
+@@ -117,6 +120,7 @@ static const struct mtk_reg_map mt7628_reg_map = {
  		.rx_ptr		= 0x0900,
  		.rx_cnt_cfg	= 0x0904,
  		.pcrx_ptr	= 0x0908,
@@ -3182,7 +3377,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  		.glo_cfg	= 0x0a04,
  		.rst_idx	= 0x0a08,
  		.delay_irq	= 0x0a0c,
-@@ -134,6 +138,7 @@ static const struct mtk_reg_map mt7986_r
+@@ -134,6 +138,7 @@ static const struct mtk_reg_map mt7986_reg_map = {
  		.rx_ptr		= 0x4100,
  		.rx_cnt_cfg	= 0x4104,
  		.pcrx_ptr	= 0x4108,
@@ -3190,7 +3385,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  		.glo_cfg	= 0x4204,
  		.rst_idx	= 0x4208,
  		.delay_irq	= 0x420c,
-@@ -160,9 +165,12 @@ static const struct mtk_reg_map mt7986_r
+@@ -160,9 +165,12 @@ static const struct mtk_reg_map mt7986_reg_map = {
  		.delay_irq	= 0x460c,
  		.fc_th		= 0x4610,
  		.int_grp	= 0x4620,
@@ -3203,7 +3398,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  		.crx_ptr	= 0x4710,
  		.drx_ptr	= 0x4714,
  		.fq_head	= 0x4720,
-@@ -192,6 +200,7 @@ static const struct mtk_reg_map mt7988_r
+@@ -192,6 +200,7 @@ static const struct mtk_reg_map mt7988_reg_map = {
  		.rx_ptr		= 0x6900,
  		.rx_cnt_cfg	= 0x6904,
  		.pcrx_ptr	= 0x6908,
@@ -3211,7 +3406,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  		.glo_cfg	= 0x6a04,
  		.rst_idx	= 0x6a08,
  		.delay_irq	= 0x6a0c,
-@@ -223,9 +232,12 @@ static const struct mtk_reg_map mt7988_r
+@@ -223,9 +232,12 @@ static const struct mtk_reg_map mt7988_reg_map = {
  		.delay_irq	= 0x460c,
  		.fc_th		= 0x4610,
  		.int_grp	= 0x4620,
@@ -3224,7 +3419,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  		.crx_ptr	= 0x4710,
  		.drx_ptr	= 0x4714,
  		.fq_head	= 0x4720,
-@@ -360,8 +372,8 @@ static int mtk_mdio_busy_wait(struct mtk
+@@ -383,8 +395,8 @@ static int mtk_mdio_busy_wait(struct mtk_eth *eth)
  	return -ETIMEDOUT;
  }
  
@@ -3235,7 +3430,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  {
  	int ret;
  
-@@ -384,8 +396,8 @@ static int _mtk_mdio_write_c22(struct mt
+@@ -407,8 +419,8 @@ static int _mtk_mdio_write_c22(struct mtk_eth *eth, u32 phy_addr, u32 phy_reg,
  	return 0;
  }
  
@@ -3246,7 +3441,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  {
  	int ret;
  
-@@ -420,7 +432,7 @@ static int _mtk_mdio_write_c45(struct mt
+@@ -443,7 +455,7 @@ static int _mtk_mdio_write_c45(struct mtk_eth *eth, u32 phy_addr,
  	return 0;
  }
  
@@ -3255,7 +3450,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  {
  	int ret;
  
-@@ -442,8 +454,8 @@ static int _mtk_mdio_read_c22(struct mtk
+@@ -465,8 +477,8 @@ static int _mtk_mdio_read_c22(struct mtk_eth *eth, u32 phy_addr, u32 phy_reg)
  	return mtk_r32(eth, MTK_PHY_IAC) & PHY_IAC_DATA_MASK;
  }
  
@@ -3266,7 +3461,33 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  {
  	int ret;
  
-@@ -2830,6 +2842,12 @@ static int mtk_poll_rx(struct napi_struc
+@@ -1400,6 +1412,7 @@ static int mtk_set_mac_address(struct net_device *dev, void *p)
+ static void mtk_stats_update_gmac_ext(struct mtk_mac *mac)
+ {
+ 	struct mtk_hw_stats *hw_stats = mac->hw_stats;
++	struct mtk_hw_stats prev_hw_stats = *hw_stats;
+ 
+ 	hw_stats->rx_unicast_packets +=
+ 		mtk_r64(mac->hw, MTK_MAC_MIB(mac->id) + 0x00);
+@@ -1426,6 +1439,8 @@ static void mtk_stats_update_gmac_ext(struct mtk_mac *mac)
+ 		mtk_r64(mac->hw, MTK_MAC_MIB(mac->id) + 0x50);
+ 	hw_stats->tx_broadcast_bytes +=
+ 		mtk_r64(mac->hw, MTK_MAC_MIB(mac->id) + 0x58);
++
++	mtk_mac_mib_update(mac, &prev_hw_stats, hw_stats);
+ }
+ 
+ static void mtk_stats_update_xgmac(struct mtk_mac *mac)
+@@ -1481,6 +1496,8 @@ static void mtk_stats_update_xgmac(struct mtk_mac *mac)
+ 	hw_stats->tx_broadcast_bytes +=
+ 		mtk_r64(mac->hw, MTK_XMAC_MCR(mac->id) + 0x178);
+ 
++	mtk_xfi_mib_update(mac);
++
+ 	mtk_m32(mac->hw, XMAC_GLB_CNTCLR, 0x1, MTK_XMAC_CNT_CTRL(mac->id));
+ }
+ 
+@@ -2921,6 +2938,12 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
  		if (reason == MTK_PPE_CPU_REASON_HIT_UNBIND_RATE_REACHED)
  			mtk_ppe_check_skb(eth->ppe[ppe_idx], skb, hash);
  
@@ -3279,7 +3500,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  		skb_record_rx_queue(skb, 0);
  		napi_gro_receive(napi, skb);
  
-@@ -5681,6 +5699,12 @@ static void mtk_restore_qdma_cfg(struct
+@@ -5778,6 +5801,12 @@ static void mtk_restore_qdma_cfg(struct mtk_eth *eth)
  			reg_map->qdma.tx_sch_rate + 0x4);
  }
  
@@ -3292,7 +3513,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  static void mtk_prepare_for_reset(struct mtk_eth *eth)
  {
  	struct mtk_mac *mac;
-@@ -6258,6 +6282,7 @@ static const struct net_device_ops mtk_n
+@@ -6369,6 +6398,7 @@ static const struct net_device_ops mtk_netdev_ops = {
  	.ndo_set_mac_address	= mtk_set_mac_address,
  	.ndo_validate_addr	= eth_validate_addr,
  	.ndo_eth_ioctl		= mtk_do_ioctl,
@@ -3300,7 +3521,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  	.ndo_change_mtu		= mtk_change_mtu,
  	.ndo_tx_timeout		= mtk_tx_timeout,
  	.ndo_get_stats64        = mtk_get_stats64,
-@@ -7137,6 +7162,8 @@ static int mtk_probe(struct platform_dev
+@@ -7248,6 +7278,8 @@ static int mtk_probe(struct platform_device *pdev)
  			goto err_deinit_ppe;
  	}
  
@@ -3309,6 +3530,8 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  	/* we run 2 devices on the same DMA ring so we need a dummy device
  	 * for NAPI to work
  	 */
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.h b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
+index b3a2cdd..3f30de4 100644
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 @@ -351,6 +351,8 @@
@@ -3337,7 +3560,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  
  /* QDMA Global Configuration Register */
  #define MTK_RX_2B_OFFSET	BIT(31)
-@@ -871,6 +881,7 @@
+@@ -874,6 +884,7 @@
  #define MTK_FE_CDM4_FSM		0x298
  #define MTK_FE_CDM5_FSM		0x318
  #define MTK_FE_CDM6_FSM		0x328
@@ -3345,7 +3568,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  #define MTK_FE_GDM1_FSM		0x228
  #define MTK_FE_GDM2_FSM		0x22C
  #define MTK_FE_GDM3_FSM		0x23C
-@@ -1554,9 +1565,12 @@ struct mtk_reg_map {
+@@ -1569,9 +1580,12 @@ struct mtk_reg_map {
  		u32	delay_irq;	/* delay interrupt */
  		u32	fc_th;		/* flow control */
  		u32	int_grp;
@@ -3358,7 +3581,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  		u32	crx_ptr;	/* tx release cpu pointer */
  		u32	drx_ptr;	/* tx release dma pointer */
  		u32	fq_head;	/* fq head pointer */
-@@ -1712,6 +1726,7 @@ struct mtk_eth {
+@@ -1727,6 +1741,7 @@ struct mtk_eth {
  	struct mtk_qdma_shaper		qdma_shaper;
  	struct clk			*clks[MTK_CLK_MAX];
  
@@ -3366,3 +3589,6 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: support proprietary debugfs
  	struct mii_bus			*mii_bus;
  	unsigned int			mdc_divider;
  	struct work_struct		pending_work;
+-- 
+2.45.2
+

@@ -1,11 +1,12 @@
 ---
-[v4] arm64: dts: mediatek: add dt overlay related dts
+[v5] arm64: dts: mediatek: add dt overlay related dts
 
 Add device tree overlay support for MT7988A RFB with various Ethernet PHY
 configurations including AN8831X, AN8855, AQR113C, CUX3410, interal 2.5G PHYs,
 and MXL86252 switch. Enables flexible hardware configuration through
 runtime DTS overlays.
 ---
+v5: Move Wi-Fi nodes to separate DTSOs
 v4: Add a device tree overlay for the new mt7988a-mxl86252-rfb (MTK-5197) to
 replace the older one.
 v3: Remove hnat node from mt7988a-rfb-eth2-mxl86252-an8831x.dtso because it is
@@ -1140,7 +1141,7 @@ v1: Move openwrt-master files to openwrt-25.12 branch after OpenWrt official
 +};
 --- /dev/null
 +++ b/arch/arm64/boot/dts/mediatek/mt7988a-rfb-spim-nand-nmbm.dtso
-@@ -0,0 +1,136 @@
+@@ -0,0 +1,120 @@
 +// SPDX-License-Identifier: (GPL-2.0 OR MIT)
 +/*
 + * Copyright (C) 2022 MediaTek Inc.
@@ -1231,29 +1232,13 @@ v1: Move openwrt-master files to openwrt-25.12 branch after OpenWrt official
 +	};
 +
 +	fragment@1 {
-+		target = <&pcie0>;
-+		__overlay__ {
-+			slot0: pcie@0,0 {
-+				reg = <0x0000 0 0 0 0>;
-+
-+				mt7996@0,0 {
-+					compatible = "mediatek,mt76";
-+					reg = <0x0000 0 0 0 0>;
-+					device_type = "pci";
-+					mediatek,mtd-eeprom = <&factory 0x0>;
-+				};
-+			};
-+		};
-+	};
-+
-+	fragment@2 {
 +		target-path = "/chosen";
 +		__overlay__ {
 +			rootdisk-spim-nand = <&ubi_rootfs>;
 +		};
 +	};
 +
-+	fragment@3 {
++	fragment@2 {
 +		target = <&gmac0>;
 +		__overlay__ {
 +			nvmem-cell-names = "mac-address";
@@ -1261,7 +1246,7 @@ v1: Move openwrt-master files to openwrt-25.12 branch after OpenWrt official
 +		};
 +	};
 +
-+	fragment@4 {
++	fragment@3 {
 +		target = <&gmac1>;
 +		__overlay__ {
 +			nvmem-cell-names = "mac-address";
@@ -1269,7 +1254,7 @@ v1: Move openwrt-master files to openwrt-25.12 branch after OpenWrt official
 +		};
 +	};
 +
-+	fragment@5 {
++	fragment@4 {
 +		target = <&gmac2>;
 +		__overlay__ {
 +			nvmem-cell-names = "mac-address";
@@ -1311,3 +1296,79 @@ v1: Move openwrt-master files to openwrt-25.12 branch after OpenWrt official
 +	};
 +};
 +
+--- a/arch/arm64/boot/dts/mediatek/mt7988a-rfb-emmc.dtso
++++ b/arch/arm64/boot/dts/mediatek/mt7988a-rfb-emmc.dtso
+@@ -45,6 +45,14 @@
+ 						};
+ 					};
+ 
++					factory: block-partition-factory {
++						partname = "factory";
++
++						nvmem-layout {
++							compatible = "fixed-layout";
++						};
++					};
++
+ 					emmc_root: block-partition-production {
+ 						partname = "production";
+ 					};
+--- a/arch/arm64/boot/dts/mediatek/mt7988a-rfb-spim-nand-factory.dtso
++++ b/arch/arm64/boot/dts/mediatek/mt7988a-rfb-spim-nand-factory.dtso
+@@ -19,10 +19,6 @@
+ 						#address-cells = <1>;
+ 						#size-cells = <1>;
+ 
+-						eeprom_wmac: eeprom@0 {
+-							reg = <0x0 0x1e00>;
+-						};
+-
+ 						gmac2_mac: eeprom@fffee {
+ 							reg = <0xfffee 0x6>;
+ 						};
+@@ -41,27 +37,6 @@
+ 	};
+ 
+ 	fragment@1 {
+-		target = <&pcie0>;
+-		__overlay__ {
+-			#address-cells = <3>;
+-			#size-cells = <2>;
+-
+-			pcie@0,0 {
+-				reg = <0x0000 0 0 0 0>;
+-				#address-cells = <3>;
+-				#size-cells = <2>;
+-
+-				wifi@0,0 {
+-					compatible = "mediatek,mt76";
+-					reg = <0x0000 0 0 0 0>;
+-					nvmem-cell-names = "eeprom";
+-					nvmem-cells = <&eeprom_wmac>;
+-				};
+-			};
+-		};
+-	};
+-
+-	fragment@2 {
+ 		target = <&gmac0>;
+ 		__overlay__ {
+ 			nvmem-cell-names = "mac-address";
+@@ -69,7 +44,7 @@
+ 		};
+ 	};
+ 
+-	fragment@3 {
++	fragment@2 {
+ 		target = <&gmac1>;
+ 		__overlay__ {
+ 			nvmem-cell-names = "mac-address";
+@@ -77,7 +52,7 @@
+ 		};
+ 	};
+ 
+-	fragment@4 {
++	fragment@3 {
+ 		target = <&gmac2>;
+ 		__overlay__ {
+ 			nvmem-cell-names = "mac-address";

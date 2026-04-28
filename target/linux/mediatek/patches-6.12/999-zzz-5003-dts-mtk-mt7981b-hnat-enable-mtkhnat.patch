@@ -10,7 +10,7 @@
 +			mtketh-lan = "lan";
 +			mtketh-max-gmac = <2>;
 +			mtketh-ppe-num = <2>;
-+			ext-devices-prefix = "wwan", "usb", "eth2";
++			ext-devices-prefix = "wwan", "usb", "eth";
  		};
  
  		ap2woccif: ap2woccif@151a5000 {

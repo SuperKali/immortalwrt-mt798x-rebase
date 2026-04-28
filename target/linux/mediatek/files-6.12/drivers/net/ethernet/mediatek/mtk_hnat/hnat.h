@@ -432,6 +432,58 @@ struct hnat_l2_bridge {
 #endif
 } __packed;
 
+struct hnat_ipv4_hnat {
+	u32 sip;
+	u32 dip;
+	u32 prot : 8;
+	u32 hph : 24; /* hash placeholder */
+	union {
+		struct hnat_info_blk2 iblk2;
+		struct hnat_info_blk2_whnat iblk2w;
+		u32 info_blk2;
+	};
+	u32 new_sip;
+	u32 new_dip;
+	u32 resv1;
+	u32 resv2;
+#if defined(CONFIG_MEDIATEK_NETSYS_V3)
+	u32 resv3_1 : 9;
+	u32 eg_keep_ecn : 1;
+	u32 eg_keep_dscp : 1;
+	u32 resv3_2 : 13;
+#else
+	u32 resv3 : 24;
+#endif
+	u32 act_dp : 8; /* UDF */
+	u16 vlan1;
+	u16 sp_tag;
+	u32 dmac_hi;
+	union {
+#if !defined(CONFIG_MEDIATEK_NETSYS_V2) && !defined(CONFIG_MEDIATEK_NETSYS_V3)
+		struct hnat_winfo winfo;
+#endif
+		u16 vlan2;
+	};
+	u16 dmac_lo;
+	u32 smac_hi;
+	u16 pppoe_id;
+	u16 smac_lo;
+#if defined(CONFIG_MEDIATEK_NETSYS_V3)
+	u16 minfo;
+	u16 resv4;
+	struct hnat_winfo winfo;
+	struct hnat_winfo_pao winfo_pao;
+	u32 cdrt_id : 8;
+	u32 tops_entry : 6;
+	u32 resv5 : 2;
+	u32 tport_id : 4;
+	u32 resv6 : 12;
+#elif defined(CONFIG_MEDIATEK_NETSYS_V2)
+	u16 minfo;
+	struct hnat_winfo winfo;
+#endif
+} __packed;
+
 struct hnat_ipv4_hnapt {
 	u32 sip;
 	u32 dip;
@@ -879,6 +931,7 @@ struct foe_entry {
 	};
 	union {
 		struct hnat_l2_bridge l2_bridge;
+		struct hnat_ipv4_hnat ipv4_hnat;
 		struct hnat_ipv4_hnapt ipv4_hnapt;
 		struct hnat_ipv4_dslite ipv4_dslite;
 		struct hnat_ipv4_mape ipv4_mape;
@@ -904,6 +957,8 @@ struct hnat_accounting {
 	u64 bytes;
 	u64 packets;
 	struct nf_conntrack_zone zone;
+	int iif; /* ingress device ifindex */
+	int oif; /* egress device ifindex */
 };
 
 enum mtk_hnat_version {
@@ -959,6 +1014,14 @@ struct hnat_neigh_update_event {
 	u8 tbl_family;
 };
 
+struct hnat_prot_3t_cfg {
+	u16 ipv4_chk; /* IPv4 protocol check flag */
+	u16 ipv6_chk; /* IPv6 protocol check flag */
+	u8 proto[16];
+	u8 num;
+	bool blist;
+};
+
 struct mtk_hnat {
 	struct device *dev;
 	void __iomem *fe_base;
@@ -1005,6 +1068,7 @@ struct mtk_hnat {
 	spinlock_t		entry_lock;
 	spinlock_t		flow_entry_lock;
 	struct hlist_head *foe_flow[MAX_PPE_NUM];
+	struct hnat_prot_3t_cfg prot_3t[MAX_PPE_NUM]; /* for 3-tuple offload */
 	struct hnat_neigh_update neigh_update;
 	int fe_irq2;
 };

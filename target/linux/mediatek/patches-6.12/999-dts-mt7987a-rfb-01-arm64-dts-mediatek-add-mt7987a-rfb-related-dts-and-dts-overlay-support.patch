@@ -1,5 +1,5 @@
 ---
-[v3] arm64: dts: mediatek: convert mt7987 to dts-overlay architecture
+[v4] arm64: dts: mediatek: convert mt7987 to dts-overlay architecture
 
 Convert MT7987 device tree to overlay based architecture. This comprehensive
 implementation demonstrates the full power of DTS overlay architecture for
@@ -11,6 +11,7 @@ refer to mt7987-netsys-*.dtso for different networking options. Peripheral
 overlays include SPIDEV for development.
 
 ---
+v4: Move Wi-Fi nodes to separate DTSOs
 v3: Update AN8855 SWCONFIG (GSW) driver to v1.0.11 for improved switch support.
 v2: Fix Bananapi BPI-R4-Lite NAND boot patches. BPI-R4-Lite uses SPI2 for NAND
     instead of SPI0 which differs from standard MT7987 RFB board.
@@ -283,7 +284,7 @@ v1: Move openwrt-master files to openwrt-25.12 branch after OpenWrt official
 +};
 --- /dev/null
 +++ b/arch/arm64/boot/dts/mediatek/mt7987-emmc.dtso
-@@ -0,0 +1,101 @@
+@@ -0,0 +1,83 @@
 +// SPDX-License-Identifier: (GPL-2.0 OR MIT)
 +
 +/dts-v1/;
@@ -340,17 +341,13 @@ v1: Move openwrt-master files to openwrt-25.12 branch after OpenWrt official
 +							};
 +						};
 +
-+						block-partition-factory {
++						factory: block-partition-factory {
 +							partname = "factory";
 +
 +							nvmem-layout {
 +								compatible = "fixed-layout";
 +								#address-cells = <1>;
 +								#size-cells = <1>;
-+
-+								eeprom_factory_0: eeprom@0 {
-+									reg = <0x0 0x1e00>;
-+								};
 +							};
 +						};
 +
@@ -367,20 +364,6 @@ v1: Move openwrt-master files to openwrt-25.12 branch after OpenWrt official
 +		target-path = "/chosen";
 +		__overlay__ {
 +			rootdisk-emmc = <&emmc_rootfs>;
-+		};
-+	};
-+
-+	fragment@4 {
-+		target = <&pcie0>;
-+		__overlay__ {
-+			slot0: pcie@0,0 {
-+				reg = <0x0000 0 0 0 0>;
-+				mt7996@0,0 {
-+					reg = <0x0000 0 0 0 0>;
-+					nvmem-cells = <&eeprom_factory_0>;
-+					nvmem-cell-names = "eeprom";
-+				};
-+			};
 +		};
 +	};
 +};
@@ -1131,7 +1114,7 @@ v1: Move openwrt-master files to openwrt-25.12 branch after OpenWrt official
 +
 --- /dev/null
 +++ b/arch/arm64/boot/dts/mediatek/mt7987-spim-nand-nmbm.dtso
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,114 @@
 +// SPDX-License-Identifier: (GPL-2.0 OR MIT)
 +
 +/dts-v1/;
@@ -1223,22 +1206,6 @@ v1: Move openwrt-master files to openwrt-25.12 branch after OpenWrt official
 +	};
 +
 +	fragment@2 {
-+		target = <&pcie0>;
-+		__overlay__ {
-+			slot0: pcie@0,0 {
-+				reg = <0x0000 0 0 0 0>;
-+
-+				mt7996@0,0 {
-+					compatible = "mediatek,mt76";
-+					reg = <0x0000 0 0 0 0>;
-+					device_type = "pci";
-+					mediatek,mtd-eeprom = <&factory 0x0>;
-+				};
-+			};
-+		};
-+	};
-+
-+	fragment@3 {
 +		target = <&gmac0>;
 +		__overlay__ {
 +			nvmem-cell-names = "mac-address";
@@ -1246,7 +1213,7 @@ v1: Move openwrt-master files to openwrt-25.12 branch after OpenWrt official
 +		};
 +	};
 +
-+	fragment@4 {
++	fragment@3 {
 +		target = <&gmac1>;
 +		__overlay__ {
 +			nvmem-cell-names = "mac-address";
@@ -1254,7 +1221,7 @@ v1: Move openwrt-master files to openwrt-25.12 branch after OpenWrt official
 +		};
 +	};
 +
-+	fragment@5 {
++	fragment@4 {
 +		target = <&gmac2>;
 +		__overlay__ {
 +			nvmem-cell-names = "mac-address";
@@ -1264,7 +1231,7 @@ v1: Move openwrt-master files to openwrt-25.12 branch after OpenWrt official
 +};
 --- /dev/null
 +++ b/arch/arm64/boot/dts/mediatek/mt7987-spim-nand.dtso
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,114 @@
 +// SPDX-License-Identifier: (GPL-2.0 OR MIT)
 +
 +/dts-v1/;
@@ -1316,17 +1283,13 @@ v1: Move openwrt-master files to openwrt-25.12 branch after OpenWrt official
 +								};
 +							};
 +
-+							ubi_factory: ubi-volume-factory {
++							factory: ubi_factory: ubi-volume-factory {
 +								volname = "factory";
 +
 +								nvmem-layout {
 +									compatible = "fixed-layout";
 +									#address-cells = <1>;
 +									#size-cells = <1>;
-+
-+									eeprom_wmac: eeprom@0 {
-+										reg = <0x0 0x1e00>;
-+									};
 +
 +									gmac2_mac: eeprom@fffee {
 +										reg = <0xfffee 0x6>;
@@ -1360,22 +1323,6 @@ v1: Move openwrt-master files to openwrt-25.12 branch after OpenWrt official
 +	};
 +
 +	fragment@2 {
-+		target = <&pcie0>;
-+		__overlay__ {
-+			slot0: pcie@0,0 {
-+				reg = <0x0000 0 0 0 0>;
-+
-+				wifi@0,0 {
-+					compatible = "mediatek,mt76";
-+					reg = <0x0000 0 0 0 0>;
-+					nvmem-cell-names = "eeprom";
-+					nvmem-cells = <&eeprom_wmac>;
-+				};
-+			};
-+		};
-+	};
-+
-+	fragment@3 {
 +		target = <&gmac0>;
 +		__overlay__ {
 +			nvmem-cell-names = "mac-address";
@@ -1383,7 +1330,7 @@ v1: Move openwrt-master files to openwrt-25.12 branch after OpenWrt official
 +		};
 +	};
 +
-+	fragment@4 {
++	fragment@3 {
 +		target = <&gmac1>;
 +		__overlay__ {
 +			nvmem-cell-names = "mac-address";
@@ -1391,7 +1338,7 @@ v1: Move openwrt-master files to openwrt-25.12 branch after OpenWrt official
 +		};
 +	};
 +
-+	fragment@5 {
++	fragment@4 {
 +		target = <&gmac2>;
 +		__overlay__ {
 +			nvmem-cell-names = "mac-address";

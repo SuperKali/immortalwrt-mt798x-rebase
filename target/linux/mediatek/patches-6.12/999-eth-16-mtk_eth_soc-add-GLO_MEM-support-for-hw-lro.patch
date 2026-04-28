@@ -1,10 +1,11 @@
 ---
-[v1] net: ethernet: mtk_eth_soc: add GLO_MEM support for HW_LRO on the MT7987
+[v2] net: ethernet: mtk_eth_soc: add GLO_MEM support for HW_LRO on the MT7987
 
 Add GLO_MEM support for HW_LRO on MT7987. This patch implements a new
 configuration for HW_LRO functionality, enabling Large Receive Offload
 feature on MT7987 SoC.
 ---
+v2: Fix HW LRO global memory DIP offset rule for MT7987.
 v1: Add GLO_MEM support for HW_LRO on the MT7987.
 ---
 
@@ -63,7 +64,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
 +	u32 reg_val;
 +
 +	reg_val = FIELD_PREP(MTK_GLO_MEM_IDX, MTK_LRO_MEM_IDX);
-+	reg_val |= FIELD_PREP(MTK_GLO_MEM_ADDR, MTK_LRO_MEM_DIP_BASE + index);
++	reg_val |= FIELD_PREP(MTK_GLO_MEM_ADDR, MTK_LRO_MEM_DIP_BASE + (index - 1));
 +	reg_val |= FIELD_PREP(MTK_GLO_MEM_CMD, MTK_GLO_MEM_READ);
 +	mtk_w32(eth, reg_val, MTK_GLO_MEM_CTRL);
 +

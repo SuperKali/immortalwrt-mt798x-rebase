@@ -1,29 +1,32 @@
 ---
-[v4] net: ethernet: mtk_eth_soc: refactor forced reset monitor
+[v5] net: ethernet: mtk_eth_soc: refactor forced reset monitor
 
 Refactor forced reset monitoring mechanism for improved error detection and recovery.
 This patch enhances reset condition detection, adds comprehensive state tracking,
 and improves recovery procedures for system stability.
 ---
+v5: Refactor ADMA Rx and QDMA Tx hang condition.
 v4: Refactor GMAC TX hang condition for the NETSYS SER monitor.
 v3: Add mtk_stats_update() to the NETSYS SER monitor.
 v2: Correct GDM/GMAC ID and refactor GDM TX hang condition.
 v1: Add WDMA Tx, QDMA Tx, GMAC Tx/Rx, GDM Tx/Rx, and ADMA Rx to NETSYS SER monitor.
 ---
 
-From 1b0d740e728bef30438c293e94de6b90a9eccbe6 Mon Sep 17 00:00:00 2001
+From 8536707abe1dce317a761162ed7f036f86a48f18 Mon Sep 17 00:00:00 2001
 From: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
-Date: Tue, 7 Oct 2025 15:41:30 +0800
+Date: Thu, 9 Apr 2026 11:22:27 +0800
 Subject: [PATCH] net: ethernet: mtk_eth_soc: refactor forced reset monitor
 
 ---
- drivers/net/ethernet/mediatek/mtk_eth_soc.c | 228 ++++++++++++++++----
+ drivers/net/ethernet/mediatek/mtk_eth_soc.c | 239 ++++++++++++++++----
  drivers/net/ethernet/mediatek/mtk_eth_soc.h |  34 ++-
- 2 files changed, 219 insertions(+), 43 deletions(-)
+ 2 files changed, 223 insertions(+), 50 deletions(-)
 
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
+index ee627cf..4fe7e8d 100644
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -2760,12 +2760,12 @@ static int mtk_poll_tx(struct mtk_eth *e
+@@ -2760,12 +2760,12 @@ static int mtk_poll_tx(struct mtk_eth *eth, int budget)
  
  static void mtk_handle_status_irq(struct mtk_eth *eth)
  {
@@ -38,7 +41,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: refactor forced reset monitor
  	}
  }
  
-@@ -3797,7 +3797,7 @@ static void mtk_dma_free(struct mtk_eth
+@@ -3797,7 +3797,7 @@ static void mtk_dma_free(struct mtk_eth *eth)
  
  static bool mtk_hw_reset_check(struct mtk_eth *eth)
  {
@@ -47,7 +50,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: refactor forced reset monitor
  
  	return (val & MTK_FE_INT_FQ_EMPTY) || (val & MTK_FE_INT_RFIFO_UF) ||
  	       (val & MTK_FE_INT_RFIFO_OV) || (val & MTK_FE_INT_TSO_FAIL) ||
-@@ -4563,80 +4563,232 @@ static void mtk_hw_warm_reset(struct mtk
+@@ -4563,81 +4563,230 @@ static void mtk_hw_warm_reset(struct mtk_eth *eth)
  			val, rst_mask);
  }
  
@@ -94,15 +97,14 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: refactor forced reset monitor
 -	bool oq_hang, cdm1_busy, adma_busy;
 -	bool wtx_busy, cdm_full, oq_free;
 -	u32 wdidx, val, gdm1_fc, gdm2_fc;
--	bool qfsm_hang, qfwd_hang;
 +	struct mtk_hw_stats *hw_stats;
-+	bool gmac_tx, gmac_rx;
-+	bool iq_hang, oq_hang, adma_hang = true;
++	bool gmac_tx, gmac_rx, gdm_rxfc = false;
++	bool iq_hang, oq_hang, adma_en, adma_full = false, adma_hang = true;
 +	bool wtx_busy, cdm_busy, oq_free;
 +	u32 adidx, wdidx, val;
 +	u32 cdma_rxfsm, gdm_txfsm, gdm_rxfsm;
 +	u32 txgp_cnt, rxgp_cnt, rxfc_cnt;
-+	bool qfsm_hang, qfwd_hang, qpse_fc;
+ 	bool qfsm_hang, qfwd_hang;
  	bool ret = false;
 +	int i;
  
@@ -156,12 +158,10 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: refactor forced reset monitor
 +		eth->reset.wdidx[i] = wdidx;
  	}
  
- 	/* QDMA sanity checks */
+-	/* QDMA sanity checks */
 -	qfsm_hang = !!mtk_r32(eth, reg_map->qdma.qtx_cfg + 0x234);
-+	val = mtk_r32(eth, reg_map->qdma.qtx_cfg + 0x234);
-+	qfsm_hang = !!FIELD_GET(GENMASK(12,8), val);
-+
- 	qfwd_hang = !mtk_r32(eth, reg_map->qdma.qtx_cfg + 0x308);
+-	qfwd_hang = !mtk_r32(eth, reg_map->qdma.qtx_cfg + 0x308);
++	mtk_stats_update(eth);
  
 -	gdm1_tx = FIELD_GET(GENMASK(31, 16), mtk_r32(eth, MTK_FE_GDM1_FSM)) > 0;
 -	gdm2_tx = FIELD_GET(GENMASK(31, 16), mtk_r32(eth, MTK_FE_GDM2_FSM)) > 0;
@@ -169,37 +169,24 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: refactor forced reset monitor
 -	gmac2_tx = FIELD_GET(GENMASK(31, 24), mtk_r32(eth, MTK_MAC_FSM(1))) != 1;
 -	gdm1_fc = mtk_r32(eth, reg_map->gdm1_cnt + 0x24);
 -	gdm2_fc = mtk_r32(eth, reg_map->gdm1_cnt + 0x64);
--
--	if (qfsm_hang && qfwd_hang &&
--	    ((gdm1_tx && gmac1_tx && gdm1_fc < 1) ||
--	     (gdm2_tx && gmac2_tx && gdm2_fc < 1))) {
-+	val = mtk_r32(eth, MTK_FE_INT_STATUS);
-+	qpse_fc = !!(FIELD_GET(BIT(PSE_QDMA_TX_PORT), val));
-+	if (qpse_fc)
-+		mtk_w32(eth, BIT(PSE_QDMA_TX_PORT), MTK_FE_INT_STATUS);
-+
-+	if (!qpse_fc && qfsm_hang && qfwd_hang) {
- 		if (++eth->reset.qdma_hang_count > 2) {
-+			dev_warn(eth->dev, "detect QDMA Tx hang !\n");
- 			eth->reset.qdma_hang_count = 0;
- 			ret = true;
- 		}
- 		goto out;
- 	}
- 
-+	mtk_stats_update(eth);
-+
 +	/* GDM sanity checks */
 +	for (i = 0; i < 3; i++) {
 +		if (!eth->netdev[i] || !netif_running(eth->netdev[i]))
 +			continue;
-+
+ 
+-	if (qfsm_hang && qfwd_hang &&
+-	    ((gdm1_tx && gmac1_tx && gdm1_fc < 1) ||
+-	     (gdm2_tx && gmac2_tx && gdm2_fc < 1))) {
+-		if (++eth->reset.qdma_hang_count > 2) {
+-			eth->reset.qdma_hang_count = 0;
+-			ret = true;
 +		hw_stats = eth->mac[i]->hw_stats;
 +
 +		txgp_cnt = hw_stats->tx_packets;
 +		rxgp_cnt = hw_stats->rx_packets;
 +		rxfc_cnt = hw_stats->rx_flow_control_packets;
 +
++		gdm_rxfc |= !!(rxfc_cnt - eth->reset.gdm_rxfc_cnt[i]);
 +		iq_hang = !!(mtk_get_iq_sta(eth, PSE_GDM_PORT(i)));
 +		oq_hang = !!(mtk_get_oq_sta(eth, PSE_GDM_PORT(i)));
 +
@@ -215,11 +202,10 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: refactor forced reset monitor
 +				eth->reset.mac_tx_hang_count[i] = 0;
 +				ret = true;
 +			}
-+			eth->reset.gdm_txgp_cnt[i] = txgp_cnt;
 +			goto out;
-+		}
+ 		}
+-		goto out;
 +		eth->reset.mac_tx_hang_count[i] = 0;
-+		eth->reset.gdm_txgp_cnt[i] = txgp_cnt;
 +
 +		/* GMAC Rx */
 +		gmac_rx = FIELD_GET(GENMASK(23, 16), mtk_r32(eth, MTK_MAC_FSM(i))) != 1;
@@ -229,11 +215,11 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: refactor forced reset monitor
 +				eth->reset.mac_rx_hang_count[i] = 0;
 +				ret = true;
 +			}
-+			eth->reset.gdm_rxgp_cnt[i] = rxgp_cnt;
++			eth->reset.gdm_txgp_cnt[i] = txgp_cnt;
++			eth->reset.gdm_rxfc_cnt[i] = rxfc_cnt;
 +			goto out;
 +		}
 +		eth->reset.mac_rx_hang_count[i] = 0;
-+		eth->reset.gdm_rxgp_cnt[i] = rxgp_cnt;
 +
 +skip_gmac:
 +		/* GDM Tx */
@@ -246,9 +232,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: refactor forced reset monitor
 +				eth->reset.gdm_tx_hang_count[i] = 0;
 +				ret = true;
 +			}
-+			eth->reset.gdm_txfsm[i] = gdm_txfsm;
-+			eth->reset.gdm_txgp_cnt[i] = txgp_cnt;
-+			eth->reset.gdm_rxfc_cnt[i] = rxfc_cnt;
++			eth->reset.gdm_rxgp_cnt[i] = rxgp_cnt;
 +			goto out;
 +		}
 +		eth->reset.gdm_tx_hang_count[i] = 0;
@@ -256,8 +240,10 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: refactor forced reset monitor
 +		eth->reset.gdm_txgp_cnt[i] = txgp_cnt;
 +		eth->reset.gdm_rxfc_cnt[i] = rxfc_cnt;
 +
-+		if (!mtk_interface_mode_is_xgmii(eth->mac[i]->interface))
++		if (!mtk_interface_mode_is_xgmii(eth->mac[i]->interface)) {
++			eth->reset.gdm_rxgp_cnt[i] = rxgp_cnt;
 +			continue;
++		}
 +
 +		/* GDM Rx */
 +		gdm_rxfsm = FIELD_GET(GENMASK(7, 0), mtk_r32(eth, MTK_FE_GDM_FSM(i)));
@@ -269,36 +255,40 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: refactor forced reset monitor
 +				eth->reset.gdm_rx_hang_count[i] = 0;
 +				ret = true;
 +			}
-+			eth->reset.gdm_rxfsm[i] = gdm_rxfsm;
-+			eth->reset.gdm_rxgp_cnt[i] = rxgp_cnt;
 +			goto out;
 +		}
 +		eth->reset.gdm_rx_hang_count[i] = 0;
 +		eth->reset.gdm_rxfsm[i] = gdm_rxfsm;
 +		eth->reset.gdm_rxgp_cnt[i] = rxgp_cnt;
-+	}
-+
+ 	}
+ 
  	/* ADMA sanity checks */
 -	oq_hang = !!(mtk_r32(eth, reg_map->pse_oq_sta) & GENMASK(8, 0));
 -	cdm1_busy = !!(mtk_r32(eth, MTK_FE_CDM1_FSM) & GENMASK(31, 16));
 -	adma_busy = !(mtk_r32(eth, reg_map->pdma.adma_rx_dbg0) & GENMASK(4, 0)) &&
 -		    !(mtk_r32(eth, reg_map->pdma.adma_rx_dbg0) & BIT(6));
++	adma_en = FIELD_GET(MTK_RX_DMA_EN, mtk_r32(eth, reg_map->pdma.glo_cfg));
++
 +	for (i = 0; i < 4; i++) {
-+		if (!mtk_r32(eth, reg_map->pdma.rx_ptr + (i * 0x100)))
++		if (!mtk_r32(eth, reg_map->pdma.rx_ptr + (i * 0x10)))
 +			continue;
 +
-+		adidx = mtk_r32(eth, reg_map->pdma.rx_ptr + (i * 0x100) + 0xc);
++		if (mtk_r32(eth, reg_map->pdma.pcrx_ptr + (i * 0x10)) ==
++		    mtk_r32(eth, reg_map->pdma.pdrx_ptr + (i * 0x10)))
++			adma_full = true;
++
++		adidx = mtk_r32(eth, reg_map->pdma.pdrx_ptr + (i * 0x10));
 +		if (adidx != eth->reset.adidx[i])
 +			adma_hang = false;
-+
-+		eth->reset.adidx[i] = adidx;
-+	}
  
 -	if (oq_hang && cdm1_busy && adma_busy) {
++		eth->reset.adidx[i] = adidx;
++	}
++
 +	oq_hang = !!(mtk_get_oq_sta(eth, PSE_ADMA_PORT));
 +	cdma_rxfsm = FIELD_GET(GENMASK(27, 16), mtk_r32(eth, MTK_FE_CDM1_FSM));
-+	if (oq_hang && adma_hang &&
-+	    ((cdma_rxfsm != 0) && (cdma_rxfsm != eth->reset.cdma_rxfsm))) {
++	if (oq_hang && adma_en && !adma_full && adma_hang &&
++	    ((cdma_rxfsm != 0) && (cdma_rxfsm == eth->reset.cdma_rxfsm))) {
  		if (++eth->reset.adma_hang_count > 2) {
 +			dev_warn(eth->dev, "detect ADMA Rx hang!\n");
  			eth->reset.adma_hang_count = 0;
@@ -306,16 +296,35 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: refactor forced reset monitor
  		}
  		goto out;
  	}
++	eth->reset.adma_hang_count = 0;
 +	eth->reset.cdma_rxfsm = cdma_rxfsm;
++
++	/* QDMA sanity checks */
++	val = mtk_r32(eth, reg_map->qdma.qtx_cfg + 0x234);
++	qfsm_hang = !!FIELD_GET(GENMASK(12,8), val);
++
++	qfwd_hang = !mtk_r32(eth, reg_map->qdma.qtx_cfg + 0x308);
  
 -	eth->reset.wdma_hang_count = 0;
++	if (!gdm_rxfc && qfsm_hang && qfwd_hang) {
++		if (++eth->reset.qdma_hang_count > 2) {
++			dev_warn(eth->dev, "detect QDMA Tx hang !\n");
++			eth->reset.qdma_hang_count = 0;
++			ret = true;
++		}
++		goto out;
++	}
  	eth->reset.qdma_hang_count = 0;
- 	eth->reset.adma_hang_count = 0;
- out:
+-	eth->reset.adma_hang_count = 0;
+-out:
 -	eth->reset.wdidx = wdidx;
  
++out:
  	return ret;
  }
+ 
+diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.h b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
+index a2158db..2aca1de 100644
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 @@ -94,7 +94,7 @@
@@ -396,3 +405,6 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: refactor forced reset monitor
  	} reset;
  };
  
+-- 
+2.45.2
+

@@ -6,7 +6,7 @@ This repository is worked on ImmortalWrt with MTK OpenWrt Feeds patches imported
 
 ## Commit Cutoff Revisions
 
-### ImmortalWrt: [62bd6b3](https://github.com/immortalwrt/immortalwrt/commit/62bd6b3625b47308343252e7875107a8bd665765) - OpenWrt 25.12 SNAPSHOT
+### ImmortalWrt: [c479494](https://github.com/immortalwrt/immortalwrt/commit/c479494ab2e5a89ac31498fe02d11987e30cba89) - OpenWrt 25.12 SNAPSHOT
 
 ```
 Merge Official Source
@@ -14,37 +14,23 @@ Merge Official Source
 Signed-off-by: Tianling Shen <cnsztl@immortalwrt.org>
 ```
 
-### MTK OpenWrt Feeds: [79b79ec](https://git01.mediatek.com/plugins/gitiles/openwrt/feeds/mtk-openwrt-feeds/+/79b79ece6267ea64db5dab853d4576d9b9c11889)
+### MTK OpenWrt Feeds: [35490ce](https://git01.mediatek.com/plugins/gitiles/openwrt/feeds/mtk-openwrt-feeds/+/35490cec6a2e5982532935fb0a1c884f7c4efdb0)
 
 ```
-[][kernel][common][eth][Refactor the check condition from PSE_FC to GDM_RXFC in the QDMA Tx hang monitor]
+[][HIGH][kernel/kernel-6.12][common][eth][Add HW LRO VLAN support including switch SP tag]
 
 [Description]
-Refactor the check condition from PSE_FC to GDM_RXFC in the QDMA Tx hang
-monitor.
+Add HW LRO max 4-depth VLAN support including switch special tag.
 
-Some abnormal devices may send a large number of pause frames to the
-DUT, causing the DUT to repeatedly trigger NETSYS SER if the PSE always
-remains in the flow control condition.
+Without this patch, the LRO hardware cannot properly parse VLAN tags
+and switch special tags, causing HW learning and offlaod to fail.
 
-[Root Cause]
-PSE_FC status does not accurately reflect the actual state if the flow
-control status does not change from OFF to ON.
-
-[Solution]
-Change the QDMA Tx hang check condition from PSE_FC to GDM_RXFC.
-
-[How to Verify]
-1. Perform the unbalanced PHY rate test to allow the traffic to occupy
-   many PSE pages.
-2. Sending a large number of pause frames to the DUT.
-
-[Info to Customer]
+[Release-log]
 N/A
 
 
-Change-Id: I17e832fe84cf03087a12458bcf50fa1532b45de0
-Reviewed-on: https://gerrit.mediatek.inc/c/openwrt/feeds/mtk_openwrt_feeds/+/11959632
+Change-Id: I6ee91c88ac1dfd1c777607087941fdd4aed99ce1
+Reviewed-on: https://gerrit.mediatek.inc/c/openwrt/feeds/mtk_openwrt_feeds/+/12022549
 ```
 
 ### l1parser: [081bb31](https://github.com/chasey-dev/l1parser/commit/081bb31211efc74594d25bfd1bb5811f3408a205)
