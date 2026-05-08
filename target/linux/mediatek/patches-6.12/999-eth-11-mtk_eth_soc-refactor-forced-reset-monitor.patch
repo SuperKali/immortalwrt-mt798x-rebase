@@ -22,11 +22,9 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: refactor forced reset monitor
  drivers/net/ethernet/mediatek/mtk_eth_soc.h |  34 ++-
  2 files changed, 223 insertions(+), 50 deletions(-)
 
-diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-index ee627cf..4fe7e8d 100644
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -2760,12 +2760,12 @@ static int mtk_poll_tx(struct mtk_eth *eth, int budget)
+@@ -2741,12 +2741,12 @@ static int mtk_poll_tx(struct mtk_eth *e
  
  static void mtk_handle_status_irq(struct mtk_eth *eth)
  {
@@ -41,7 +39,7 @@ index ee627cf..4fe7e8d 100644
  	}
  }
  
-@@ -3797,7 +3797,7 @@ static void mtk_dma_free(struct mtk_eth *eth)
+@@ -3781,7 +3781,7 @@ static void mtk_dma_free(struct mtk_eth
  
  static bool mtk_hw_reset_check(struct mtk_eth *eth)
  {
@@ -50,7 +48,7 @@ index ee627cf..4fe7e8d 100644
  
  	return (val & MTK_FE_INT_FQ_EMPTY) || (val & MTK_FE_INT_RFIFO_UF) ||
  	       (val & MTK_FE_INT_RFIFO_OV) || (val & MTK_FE_INT_TSO_FAIL) ||
-@@ -4563,81 +4563,230 @@ static void mtk_hw_warm_reset(struct mtk_eth *eth)
+@@ -4571,81 +4571,230 @@ static void mtk_hw_warm_reset(struct mtk
  			val, rst_mask);
  }
  
@@ -169,17 +167,18 @@ index ee627cf..4fe7e8d 100644
 -	gmac2_tx = FIELD_GET(GENMASK(31, 24), mtk_r32(eth, MTK_MAC_FSM(1))) != 1;
 -	gdm1_fc = mtk_r32(eth, reg_map->gdm1_cnt + 0x24);
 -	gdm2_fc = mtk_r32(eth, reg_map->gdm1_cnt + 0x64);
-+	/* GDM sanity checks */
-+	for (i = 0; i < 3; i++) {
-+		if (!eth->netdev[i] || !netif_running(eth->netdev[i]))
-+			continue;
- 
+-
 -	if (qfsm_hang && qfwd_hang &&
 -	    ((gdm1_tx && gmac1_tx && gdm1_fc < 1) ||
 -	     (gdm2_tx && gmac2_tx && gdm2_fc < 1))) {
 -		if (++eth->reset.qdma_hang_count > 2) {
 -			eth->reset.qdma_hang_count = 0;
 -			ret = true;
++	/* GDM sanity checks */
++	for (i = 0; i < 3; i++) {
++		if (!eth->netdev[i] || !netif_running(eth->netdev[i]))
++			continue;
++
 +		hw_stats = eth->mac[i]->hw_stats;
 +
 +		txgp_cnt = hw_stats->tx_packets;
@@ -276,12 +275,12 @@ index ee627cf..4fe7e8d 100644
 +		if (mtk_r32(eth, reg_map->pdma.pcrx_ptr + (i * 0x10)) ==
 +		    mtk_r32(eth, reg_map->pdma.pdrx_ptr + (i * 0x10)))
 +			adma_full = true;
-+
+ 
+-	if (oq_hang && cdm1_busy && adma_busy) {
 +		adidx = mtk_r32(eth, reg_map->pdma.pdrx_ptr + (i * 0x10));
 +		if (adidx != eth->reset.adidx[i])
 +			adma_hang = false;
- 
--	if (oq_hang && cdm1_busy && adma_busy) {
++
 +		eth->reset.adidx[i] = adidx;
 +	}
 +
@@ -302,10 +301,10 @@ index ee627cf..4fe7e8d 100644
 +	/* QDMA sanity checks */
 +	val = mtk_r32(eth, reg_map->qdma.qtx_cfg + 0x234);
 +	qfsm_hang = !!FIELD_GET(GENMASK(12,8), val);
-+
-+	qfwd_hang = !mtk_r32(eth, reg_map->qdma.qtx_cfg + 0x308);
  
 -	eth->reset.wdma_hang_count = 0;
++	qfwd_hang = !mtk_r32(eth, reg_map->qdma.qtx_cfg + 0x308);
++
 +	if (!gdm_rxfc && qfsm_hang && qfwd_hang) {
 +		if (++eth->reset.qdma_hang_count > 2) {
 +			dev_warn(eth->dev, "detect QDMA Tx hang !\n");
@@ -323,8 +322,6 @@ index ee627cf..4fe7e8d 100644
  	return ret;
  }
  
-diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.h b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
-index a2158db..2aca1de 100644
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 @@ -94,7 +94,7 @@
@@ -346,7 +343,7 @@ index a2158db..2aca1de 100644
  /* CDMP Ingress Control Register */
  #define MTK_CDMQ_IG_CTRL	0x1400
  #define MTK_CDMQ_STAG_EN	BIT(0)
-@@ -351,8 +354,6 @@
+@@ -352,8 +355,6 @@
  #define MTK_TX_DONE_INT0	BIT(0)
  #define MTK_TX_DONE_INT		MTK_TX_DONE_DLY
  
@@ -355,7 +352,7 @@ index a2158db..2aca1de 100644
  /* QDMA Interrupt grouping registers */
  #define MTK_RLS_DONE_INT	BIT(0)
  
-@@ -711,6 +712,12 @@
+@@ -712,6 +713,12 @@
  #define MTK_FE_DROP_FC		0x248
  #define MTK_FE_DROP_PPE		0x24C
  
@@ -368,7 +365,7 @@ index a2158db..2aca1de 100644
  #define MTK_MAC_FSM(x)		(0x1010C + ((x) * 0x100))
  
  struct mtk_rx_dma {
-@@ -952,6 +959,12 @@ enum mtk_pse_port {
+@@ -953,6 +960,12 @@ enum mtk_pse_port {
  	PSE_PORT_MAX
  };
  
@@ -381,7 +378,7 @@ index a2158db..2aca1de 100644
  /* GMAC Identifier */
  enum mtk_gmac_id {
  	MTK_GMAC1_ID = 0,
-@@ -1506,10 +1519,21 @@ struct mtk_eth {
+@@ -1507,10 +1520,21 @@ struct mtk_eth {
  	struct {
  		struct delayed_work monitor_work;
  		atomic_t force;
@@ -405,6 +402,3 @@ index a2158db..2aca1de 100644
  	} reset;
  };
  
--- 
-2.45.2
-

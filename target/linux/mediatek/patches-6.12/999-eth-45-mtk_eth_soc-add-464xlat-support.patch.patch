@@ -19,7 +19,7 @@ Subject: [PATCH] net: ethernet: mtk_eth: add 464xlat support
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
-@@ -1751,6 +1751,8 @@ struct mtk_eth {
+@@ -1752,6 +1752,8 @@ struct mtk_eth {
  	struct work_struct		ppe_roam_work;
  	unsigned char			ppe_roam_buf[1024];
  

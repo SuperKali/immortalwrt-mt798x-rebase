@@ -1,9 +1,10 @@
 ---
-[v1] netfilter: add bridging support to xt_FLOWOFFLOAD
+[v2] netfilter: add bridging support to xt_FLOWOFFLOAD
 
 Without this patch, we are unable to use xt_FLOWOFFLOAD to perform
 bridging offload.
 ---
+v2: Fix IPv6 bridge offload fail without bridge master route
 v1: add bridging support to xt_FLOWOFFLOAD.
 ---
 
@@ -25,7 +26,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
 
 --- a/include/linux/netdevice.h
 +++ b/include/linux/netdevice.h
-@@ -3090,6 +3090,8 @@ int dev_get_iflink(const struct net_devi
+@@ -3092,6 +3092,8 @@ int dev_get_iflink(const struct net_devi
  int dev_fill_metadata_dst(struct net_device *dev, struct sk_buff *skb);
  int dev_fill_forward_path(const struct net_device *dev, const u8 *daddr,
  			  struct net_device_path_stack *stack);
@@ -321,7 +322,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  {
  	struct dst_entry *this_dst = skb_dst(skb);
  	struct dst_entry *other_dst = NULL;
-@@ -456,15 +543,86 @@ xt_flowoffload_route(struct sk_buff *skb
+@@ -456,10 +543,78 @@ xt_flowoffload_route(struct sk_buff *skb
  	nf_default_forward_path(route, this_dst, dir, devs);
  	nf_default_forward_path(route, other_dst, !dir, devs);
  
@@ -334,38 +335,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
 +			return -ENOENT;
 +		if (nf_dev_forward_path(skb, route, ct, !dir, devs))
 +			return -ENOENT;
- 	}
- 
- 	return 0;
- }
- 
-+static int
-+xt_flowoffload_route_dir(struct sk_buff *skb, struct nf_flow_route *route,
-+			 const struct nf_conn *ct, enum ip_conntrack_dir dir,
-+			 const struct xt_action_param *par, int ifindex,
-+			 struct net_device **devs)
-+{
-+	struct dst_entry *dst = NULL;
-+	struct flowi fl;
-+
-+	memset(&fl, 0, sizeof(fl));
-+	switch (xt_family(par)) {
-+	case NFPROTO_IPV4:
-+		fl.u.ip4.daddr = ct->tuplehash[!dir].tuple.src.u3.ip;
-+		fl.u.ip4.flowi4_oif = ifindex;
-+		break;
-+	case NFPROTO_IPV6:
-+		fl.u.ip6.saddr = ct->tuplehash[!dir].tuple.dst.u3.in6;
-+		fl.u.ip6.daddr = ct->tuplehash[!dir].tuple.src.u3.in6;
-+		fl.u.ip6.flowi6_oif = ifindex;
-+		break;
 +	}
-+
-+	nf_route(xt_net(par), &dst, &fl, false, xt_family(par));
-+	if (!dst)
-+		return -ENOENT;
-+
-+	nf_default_forward_path(route, dst, dir, devs);
 +
 +	return 0;
 +}
@@ -376,42 +346,65 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
 +			      struct nf_flow_route *route, enum ip_conntrack_dir dir,
 +			      struct net_device **devs)
 +{
-+	int ret;
++	struct dst_entry *dsts[IP_CT_DIR_MAX] = {};
++	struct net_bridge_port *port;
++	struct net_device *br_dev;
++	int i;
 +
-+	ret = xt_flowoffload_route_dir(skb, route, ct, dir, par,
-+				       devs[dir]->ifindex,
-+				       devs);
-+	if (ret)
-+		return ret;
++	/* Allocate minimal dsts anchored to the bridge master device to
++	 * supply xmit_type and MTU for bridge forwarding.
++	 */
++	rcu_read_lock();
++	port = br_port_get_rcu(skb->dev);
++	if (!port) {
++		rcu_read_unlock();
++		return -ENOENT;
++	}
++	br_dev = port->br->dev;
 +
-+	ret = xt_flowoffload_route_dir(skb, route, ct, !dir, par,
-+				       devs[!dir]->ifindex,
-+				       devs);
-+	if (ret)
-+		goto err_route_dir1;
++	for (i = 0; i < IP_CT_DIR_MAX; i++) {
++		switch (xt_family(par)) {
++		case NFPROTO_IPV4: {
++			struct rtable *rt;
++
++			rt = rt_dst_alloc(br_dev, 0, RTN_UNICAST, true);
++			if (rt)
++				dsts[i] = &rt->dst;
++			break;
++		}
++		case NFPROTO_IPV6: {
++			struct rt6_info *rt;
++
++			rt = ip6_dst_alloc(xt_net(par), br_dev, 0);
++			if (rt)
++				dsts[i] = &rt->dst;
++			break;
++		}
++		}
++	}
++	rcu_read_unlock();
++
++	if (!dsts[dir] || !dsts[!dir]) {
++		dst_release(dsts[dir]);
++		dst_release(dsts[!dir]);
++		return -ENOENT;
++	}
++
++	nf_default_forward_path(route, dsts[dir], dir, devs);
++	nf_default_forward_path(route, dsts[!dir], !dir, devs);
 +
 +	if (route->tuple[dir].xmit_type == FLOW_OFFLOAD_XMIT_NEIGH &&
 +	    route->tuple[!dir].xmit_type == FLOW_OFFLOAD_XMIT_NEIGH) {
 +		if (nf_dev_forward_path(skb, route, ct, dir, devs) ||
 +		    nf_dev_forward_path(skb, route, ct, !dir, devs)) {
-+			ret = -ENOENT;
-+			goto err_route_dir2;
++			dst_release(route->tuple[dir].dst);
++			dst_release(route->tuple[!dir].dst);
++			return -ENOENT;
 +		}
-+	}
-+
-+	return 0;
-+
-+err_route_dir2:
-+	dst_release(route->tuple[!dir].dst);
-+err_route_dir1:
-+	dst_release(route->tuple[dir].dst);
-+	return ret;
-+}
-+
- static unsigned int
- flowoffload_tg(struct sk_buff *skb, const struct xt_action_param *par)
- {
-@@ -520,8 +678,13 @@ flowoffload_tg(struct sk_buff *skb, cons
+ 	}
+ 
+ 	return 0;
+@@ -520,8 +675,13 @@ flowoffload_tg(struct sk_buff *skb, cons
  	if (test_and_set_bit(IPS_OFFLOAD_BIT, &ct->status))
  		return XT_CONTINUE;
  

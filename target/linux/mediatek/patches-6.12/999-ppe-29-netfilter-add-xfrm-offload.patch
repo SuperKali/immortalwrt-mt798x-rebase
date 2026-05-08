@@ -10,7 +10,7 @@ v1: Add IPSec XFRM offload support to netfilter flow table
 
 --- a/net/netfilter/nf_flow_table_offload.c
 +++ b/net/netfilter/nf_flow_table_offload.c
-@@ -244,6 +244,7 @@ static int flow_offload_eth_src(struct n
+@@ -254,6 +254,7 @@ static int flow_offload_eth_src(struct n
  	case FLOW_OFFLOAD_XMIT_DIRECT:
  		addr = this_tuple->out.h_source;
  		break;
@@ -18,7 +18,7 @@ v1: Add IPSec XFRM offload support to netfilter flow table
  	case FLOW_OFFLOAD_XMIT_NEIGH:
  		other_tuple = &flow->tuplehash[!dir].tuple;
  		dev = dev_get_by_index(net, other_tuple->iifidx);
-@@ -294,6 +295,7 @@ static int flow_offload_eth_dst(struct n
+@@ -307,6 +308,7 @@ static int flow_offload_eth_dst(struct n
  	case FLOW_OFFLOAD_XMIT_DIRECT:
  		ether_addr_copy(ha, this_tuple->out.h_dest);
  		break;
@@ -26,7 +26,7 @@ v1: Add IPSec XFRM offload support to netfilter flow table
  	case FLOW_OFFLOAD_XMIT_NEIGH:
  		other_tuple = &flow->tuplehash[!dir].tuple;
  		daddr = &other_tuple->src_v4;
-@@ -562,6 +564,7 @@ static void flow_offload_redirect(struct
+@@ -601,6 +603,7 @@ static int flow_offload_redirect(struct
  		this_tuple = &flow->tuplehash[dir].tuple;
  		ifindex = this_tuple->out.hw_ifidx;
  		break;
@@ -34,19 +34,19 @@ v1: Add IPSec XFRM offload support to netfilter flow table
  	case FLOW_OFFLOAD_XMIT_NEIGH:
  		other_tuple = &flow->tuplehash[!dir].tuple;
  		ifindex = other_tuple->iifidx;
-@@ -602,6 +605,12 @@ static void flow_offload_encap_tunnel(co
- 			entry->tunnel = tun_info;
+@@ -651,6 +654,12 @@ static int flow_offload_encap_tunnel(con
  		}
  	}
-+
+ 
 +	if (dst && dst_xfrm(dst)) {
 +		entry = flow_action_entry_next(flow_rule);
 +		entry->id = FLOW_ACTION_IPSEC_PUSH;
 +		memcpy(&entry->ipsec.xs, dst->xfrm, sizeof(struct xfrm_state));
 +	}
++
+ 	return 0;
  }
  
- static void flow_offload_decap_tunnel(const struct flow_offload *flow,
 --- a/include/net/flow_offload.h
 +++ b/include/net/flow_offload.h
 @@ -5,6 +5,7 @@

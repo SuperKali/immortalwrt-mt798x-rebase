@@ -31,7 +31,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: add learning info for HWLRO
  /* CDMP Ingress Control Register */
  #define MTK_CDMQ_IG_CTRL	0x1400
  #define MTK_CDMQ_STAG_EN	BIT(0)
-@@ -272,6 +277,13 @@
+@@ -273,6 +278,13 @@
  #define MTK_RSS_INDR_TABLE_DW(x)	(reg_map->pdma.rss_glo_cfg + 0x50 +	\
  					 ((x) * 0x4))
  
@@ -45,7 +45,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: add learning info for HWLRO
  /* PDMA Global Configuration Register */
  #define MTK_PDMA_LRO_SDL	0x3000
  #define MTK_RX_CFG_SDL_OFFSET	16
-@@ -315,6 +327,26 @@
+@@ -316,6 +328,26 @@
  #define MTK_RING_MAX_AGG_CNT_L		((MTK_HW_LRO_MAX_AGG_CNT & 0x3f) << 26)
  #define MTK_RING_MAX_AGG_CNT_H		((MTK_HW_LRO_MAX_AGG_CNT >> 6) & 0x3)
  
@@ -72,7 +72,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: add learning info for HWLRO
  /* QDMA TX Queue Configuration Registers */
  #define MTK_QTX_OFFSET		0x10
  #define QDMA_RES_THRES		4
-@@ -479,6 +511,10 @@
+@@ -480,6 +512,10 @@
  #define RX_DMA_L4_VALID_PDMA	BIT(30)		/* when PDMA is used */
  #define RX_DMA_SPECIAL_TAG	BIT(22)
  
@@ -83,7 +83,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: add learning info for HWLRO
  /* PDMA descriptor rxd5 */
  #define MTK_RXD5_FOE_ENTRY	GENMASK(14, 0)
  #define MTK_RXD5_PPE_CPU_REASON	GENMASK(22, 18)
-@@ -491,6 +527,10 @@
+@@ -492,6 +528,10 @@
  #define RX_DMA_VTAG_V2		BIT(0)
  #define RX_DMA_L4_VALID_V2	BIT(2)
  

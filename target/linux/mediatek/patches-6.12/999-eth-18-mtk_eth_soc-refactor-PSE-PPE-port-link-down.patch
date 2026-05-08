@@ -26,7 +26,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -5285,15 +5285,10 @@ static void mtk_prepare_for_reset(struct
+@@ -5307,15 +5307,10 @@ static void mtk_prepare_for_reset(struct
  	int i;
  
  	/* set FE PPE ports link down */
@@ -46,7 +46,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	}
  
  	/* adjust PPE configurations to prepare for reset */
-@@ -5314,7 +5309,6 @@ static void mtk_pending_work(struct work
+@@ -5336,7 +5331,6 @@ static void mtk_pending_work(struct work
  {
  	struct mtk_eth *eth = container_of(work, struct mtk_eth, pending_work);
  	unsigned long restart = 0;
@@ -54,7 +54,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	int i;
  
  	rtnl_lock();
-@@ -5357,19 +5351,6 @@ static void mtk_pending_work(struct work
+@@ -5379,19 +5373,6 @@ static void mtk_pending_work(struct work
  		}
  	}
  
@@ -85,7 +85,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  #define MTK_FE_LINK_DOWN_P(x)	BIT(((x) + 8) % 16)
  
  /* Frame Engine Global Reset Register */
-@@ -1001,6 +1001,9 @@ enum mtk_pse_port {
+@@ -1002,6 +1002,9 @@ enum mtk_pse_port {
  #define PSE_GDM_PORT(x)		(((x) == 0) ? PSE_GDM1_PORT : \
  				 ((x) == 1) ? PSE_GDM2_PORT : PSE_GDM3_PORT)
  

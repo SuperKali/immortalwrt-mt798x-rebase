@@ -30,7 +30,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -931,6 +931,40 @@ static void mtk_set_queue_speed(struct m
+@@ -913,6 +913,40 @@ static void mtk_set_queue_speed(struct m
  	mtk_w32(eth, val, soc->reg_map->qdma.qtx_sch + ofs);
  }
  
@@ -71,7 +71,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  static void mtk_gdm_mac_link_up(struct mtk_mac *mac,
  				struct phy_device *phy,
  				unsigned int mode, phy_interface_t interface,
-@@ -966,17 +1000,12 @@ static void mtk_gdm_mac_link_up(struct m
+@@ -948,17 +982,12 @@ static void mtk_gdm_mac_link_up(struct m
  	if (rx_pause)
  		mcr |= MAC_MCR_FORCE_RX_FC;
  
@@ -93,7 +93,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  }
  
  static void mtk_xgdm_mac_link_up(struct mtk_mac *mac,
-@@ -5510,9 +5539,11 @@ static int mtk_get_eee(struct net_device
+@@ -5533,9 +5562,11 @@ static int mtk_get_eee(struct net_device
  	if (ret)
  		return ret;
  
@@ -108,7 +108,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  
  	return 0;
  }
-@@ -5520,37 +5551,20 @@ static int mtk_get_eee(struct net_device
+@@ -5543,37 +5574,20 @@ static int mtk_get_eee(struct net_device
  static int mtk_set_eee(struct net_device *dev, struct ethtool_keee *eee)
  {
  	struct mtk_mac *mac = netdev_priv(dev);
@@ -156,7 +156,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  }
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
-@@ -526,6 +526,7 @@
+@@ -527,6 +527,7 @@
  #define MAC_EEE_WAKEUP_TIME_1000	GENMASK(31, 24)
  #define MAC_EEE_WAKEUP_TIME_100		GENMASK(23, 16)
  #define MAC_EEE_LPI_TXIDLE_THD		GENMASK(15, 8)

@@ -60,7 +60,7 @@ WiFi roams.
  static void
  __mtk_foe_entry_clear(struct mtk_ppe *ppe, struct mtk_flow_entry *entry,
  		      bool set_state)
-@@ -1134,3 +1157,191 @@ int mtk_ppe_stop(struct mtk_ppe *ppe)
+@@ -1164,3 +1187,191 @@ int mtk_ppe_stop(struct mtk_ppe *ppe)
  
  	return 0;
  }
@@ -260,9 +260,9 @@ WiFi roams.
  void mtk_ppe_deinit(struct mtk_eth *eth);
 +int mtk_ppe_roaming_start(struct mtk_eth *eth);
 +int mtk_ppe_roaming_stop(struct mtk_eth *eth);
+ void mtk_ppe_update_mtu(struct mtk_ppe *ppe, int mtu);
  void mtk_ppe_start(struct mtk_ppe *ppe);
  int mtk_ppe_stop(struct mtk_ppe *ppe);
- int mtk_ppe_prepare_reset(struct mtk_ppe *ppe);
 --- a/drivers/net/ethernet/mediatek/mtk_ppe_debugfs.c
 +++ b/drivers/net/ethernet/mediatek/mtk_ppe_debugfs.c
 @@ -253,6 +253,60 @@ static const struct file_operations mtk_

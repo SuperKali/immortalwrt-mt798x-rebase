@@ -62,7 +62,7 @@ Subject: [PATCH] net: ethernet: mtk_ppe: add mxl862 switch dsa tag 8021q flow
  int mtk_foe_entry_set_dscp(struct mtk_eth *eth, struct mtk_foe_entry *entry,
 --- a/drivers/net/ethernet/mediatek/mtk_ppe.h
 +++ b/drivers/net/ethernet/mediatek/mtk_ppe.h
-@@ -401,7 +401,7 @@ int mtk_foe_entry_set_ipv6_tuple(struct
+@@ -402,7 +402,7 @@ int mtk_foe_entry_set_ipv6_tuple(struct
  				 __be32 *src_addr, __be16 src_port,
  				 __be32 *dest_addr, __be16 dest_port);
  int mtk_foe_entry_set_dsa(struct mtk_eth *eth, struct mtk_foe_entry *entry,
@@ -126,15 +126,15 @@ Subject: [PATCH] net: ethernet: mtk_ppe: add mxl862 switch dsa tag 8021q flow
  		queue = 3 + dsa_port;
  	} else {
  		queue = (pse_port == PSE_GDM3_PORT) ? 2 : pse_port - 1;
-@@ -394,6 +398,7 @@ mtk_flow_offload_replace(struct mtk_eth
+@@ -413,6 +417,7 @@ mtk_flow_offload_replace(struct mtk_eth
  		flow_rule_match_meta(rule, &match);
  		if (mtk_is_netsys_v2_or_greater(eth)) {
  			idev = __dev_get_by_index(&init_net, match.key->ingress_ifindex);
 +			mtk_flow_get_dsa_port(&idev, NULL);
- 			if (idev && idev->netdev_ops == eth->netdev[0]->netdev_ops) {
+ 			if (mtk_flow_is_valid_idev(eth, idev)) {
  				struct mtk_mac *mac = netdev_priv(idev);
  
-@@ -583,6 +588,14 @@ mtk_flow_offload_replace(struct mtk_eth
+@@ -602,6 +607,14 @@ mtk_flow_offload_replace(struct mtk_eth
  			return err;
  	}
  
@@ -149,7 +149,7 @@ Subject: [PATCH] net: ethernet: mtk_ppe: add mxl862 switch dsa tag 8021q flow
  	if (offload_type == MTK_PPE_PKT_TYPE_BRIDGE)
  		foe.bridge.vlan = data.vlan_in;
  
-@@ -592,14 +605,6 @@ mtk_flow_offload_replace(struct mtk_eth
+@@ -611,14 +624,6 @@ mtk_flow_offload_replace(struct mtk_eth
  	if (data.pppoe.num == 1)
  		mtk_foe_entry_set_pppoe(eth, &foe, data.pppoe.sid);
  

@@ -32,7 +32,7 @@ support
  
  	return;
  
-@@ -923,13 +923,10 @@ static void mtk_set_max_mtu(struct mtk_m
+@@ -898,13 +898,10 @@ static void mtk_set_max_mtu(struct mtk_m
  {
  	struct mtk_eth *eth = mac->hw;
  
@@ -48,7 +48,7 @@ support
  }
  
  static void mtk_set_queue_speed(struct mtk_eth *eth, unsigned int idx,
-@@ -1511,22 +1508,22 @@ static void mtk_get_stats64(struct net_d
+@@ -1485,22 +1482,22 @@ static void mtk_get_stats64(struct net_d
  	storage->tx_dropped = dev->stats.tx_dropped;
  }
  
@@ -77,7 +77,7 @@ support
  
  	return buf_size;
  }
-@@ -3235,8 +3232,8 @@ static int mtk_rx_alloc(struct mtk_eth *
+@@ -3209,8 +3206,8 @@ static int mtk_rx_alloc(struct mtk_eth *
  		rx_dma_size = soc->rx.dma_size;
  	}
  
@@ -88,7 +88,7 @@ support
  	ring->data = kcalloc(rx_dma_size, sizeof(*ring->data),
  			     GFP_KERNEL);
  	if (!ring->data)
-@@ -3514,7 +3511,7 @@ static int mtk_hwlro_rx_init(struct mtk_
+@@ -3488,7 +3485,7 @@ static int mtk_hwlro_rx_init(struct mtk_
  
  	if (mtk_is_netsys_v3_or_greater(eth)) {
  		val = mtk_r32(eth, reg_map->pdma.rx_cfg);
@@ -97,35 +97,36 @@ support
  			MTK_RX_CFG_SDL_OFFSET), reg_map->pdma.rx_cfg);
  
  		lro_ctrl_dw0 |= MTK_PDMA_LRO_SDL << MTK_CTRL_DW0_SDL_OFFSET;
-@@ -5473,9 +5470,21 @@ static void mtk_uninit(struct net_device
+@@ -5486,10 +5483,17 @@ static void mtk_uninit(struct net_device
  
  static int mtk_change_mtu(struct net_device *dev, int new_mtu)
  {
 -	int length = new_mtu + MTK_RX_ETH_HLEN;
  	struct mtk_mac *mac = netdev_priv(dev);
  	struct mtk_eth *eth = mac->hw;
-+	int i, length, max_mtu = 0;
+-	int max_mtu, i;
++	int max_mtu, i, length;
 +
 +	WRITE_ONCE(dev->mtu, new_mtu);
 +
-+	for (i = 0; i < MTK_MAX_DEVS; i++) {
-+		if (!eth->netdev[i])
-+			continue;
-+
-+		if (eth->netdev[i]->mtu > max_mtu)
-+			max_mtu = eth->netdev[i]->mtu;
-+	}
++	max_mtu = mtk_max_gmac_mtu(eth);
++	for (i = 0; i < ARRAY_SIZE(eth->ppe); i++)
++		mtk_ppe_update_mtu(eth->ppe[i], max_mtu);
 +
 +	length = max_mtu + MTK_RX_ETH_HLEN;
  
  	if (rcu_access_pointer(eth->prog) &&
  	    length > MTK_PP_MAX_BUF_SIZE) {
-@@ -5483,8 +5492,11 @@ static int mtk_change_mtu(struct net_dev
+@@ -5497,12 +5501,11 @@ static int mtk_change_mtu(struct net_dev
  		return -EINVAL;
  	}
  
 -	mtk_set_mcr_max_rx(mac, length);
 -	WRITE_ONCE(dev->mtu, new_mtu);
+-
+-	max_mtu = mtk_max_gmac_mtu(eth);
+-	for (i = 0; i < ARRAY_SIZE(eth->ppe); i++)
+-		mtk_ppe_update_mtu(eth->ppe[i], max_mtu);
 +	if (length <= MTK_MAX_RX_LENGTH)
 +		eth->rx_buf_len = MTK_MAX_RX_LENGTH;
 +	else
@@ -134,7 +135,7 @@ support
  
  	return 0;
  }
-@@ -7062,6 +7074,8 @@ static int mtk_probe(struct platform_dev
+@@ -7080,6 +7083,8 @@ static int mtk_probe(struct platform_dev
  				   eth->netdev[i]->base_addr, eth->irq_fe[0]);
  	}
  
@@ -154,7 +155,7 @@ support
  #define	MTK_MAX_LRO_IP_CNT		2
  #define	MTK_HW_LRO_TIMER_UNIT		1	/* 20 us */
  #define	MTK_HW_LRO_REFRESH_TIME		50000	/* 1 sec. */
-@@ -1604,6 +1604,7 @@ struct mtk_eth {
+@@ -1605,6 +1605,7 @@ struct mtk_eth {
  
  	spinlock_t			dim_lock;
  

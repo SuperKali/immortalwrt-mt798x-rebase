@@ -25,7 +25,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -1005,7 +1005,6 @@ static void mtk_gdm_mac_link_up(struct m
+@@ -980,7 +980,6 @@ static void mtk_gdm_mac_link_up(struct m
  		 MAC_MCR_FORCE_RX_FC);
  
  	/* Configure speed */
@@ -33,7 +33,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	switch (speed) {
  	case SPEED_2500:
  	case SPEED_1000:
-@@ -1091,6 +1090,7 @@ static void mtk_mac_link_up(struct phyli
+@@ -1066,6 +1065,7 @@ static void mtk_mac_link_up(struct phyli
  	struct mtk_mac *mac = container_of(config, struct mtk_mac,
  					   phylink_config);
  

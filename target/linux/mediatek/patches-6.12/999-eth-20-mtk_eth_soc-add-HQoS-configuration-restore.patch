@@ -29,7 +29,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -5318,6 +5318,54 @@ static void mt7988_esw_force_link(struct
+@@ -5340,6 +5340,54 @@ static void mt7988_esw_force_link(struct
  	__raw_writel(val, eth->esw_base + MT753X_PMCR_P(6));
  }
  
@@ -84,7 +84,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  static void mtk_prepare_for_reset(struct mtk_eth *eth)
  {
  	struct mtk_mac *mac;
-@@ -5370,6 +5418,7 @@ static void mtk_pending_work(struct work
+@@ -5392,6 +5440,7 @@ static void mtk_pending_work(struct work
  
  	mtk_hw_dump_all(eth);
  
@@ -92,7 +92,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	mtk_prepare_for_reset(eth);
  	mtk_wed_fe_reset();
  	/* Run again reset preliminary configuration in order to avoid any
-@@ -5413,6 +5462,7 @@ static void mtk_pending_work(struct work
+@@ -5435,6 +5484,7 @@ static void mtk_pending_work(struct work
  	clear_bit(MTK_RESETTING, &eth->state);
  
  	mtk_wed_fe_reset_complete();
@@ -102,7 +102,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  }
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
-@@ -337,6 +337,9 @@
+@@ -338,6 +338,9 @@
  #define MTK_QTX_SCH_MAX_RATE_MAN_V3	GENMASK(9, 3)
  #define MTK_QTX_SCH_MAX_RATE_EXP_V3	GENMASK(2, 0)
  
@@ -112,7 +112,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  /* QDMA TX Scheduler Rate Control Register */
  #define MTK_QDMA_TX_SCH_MAX_WFQ		BIT(15)
  
-@@ -1126,6 +1129,21 @@ struct mtk_napi {
+@@ -1127,6 +1130,21 @@ struct mtk_napi {
  	struct mtk_rx_ring	*rx_ring;
  };
  
@@ -134,7 +134,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  enum mkt_eth_capabilities {
  	MTK_RGMII_BIT = 0,
  	MTK_TRGMII_BIT,
-@@ -1533,6 +1551,7 @@ struct mtk_eth {
+@@ -1534,6 +1552,7 @@ struct mtk_eth {
  	struct napi_struct		tx_napi;
  	struct mtk_napi			rx_napi[MTK_RX_NAPI_NUM];
  	struct mtk_rss_params		rss_params;

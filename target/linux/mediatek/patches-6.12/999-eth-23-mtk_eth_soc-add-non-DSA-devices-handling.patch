@@ -24,7 +24,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -4170,35 +4170,40 @@ static int mtk_device_event(struct notif
+@@ -4147,35 +4147,40 @@ static int mtk_device_event(struct notif
  	struct net_device *ldev;
  	struct list_head *iter;
  	struct dsa_port *dp;

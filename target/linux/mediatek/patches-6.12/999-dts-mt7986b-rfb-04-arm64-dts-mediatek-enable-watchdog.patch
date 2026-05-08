@@ -1,0 +1,15 @@
+Index: linux-6.12.79/arch/arm64/boot/dts/mediatek/mt7986b-rfb.dts
+===================================================================
+--- linux-6.12.79.orig/arch/arm64/boot/dts/mediatek/mt7986b-rfb.dts
++++ linux-6.12.79/arch/arm64/boot/dts/mediatek/mt7986b-rfb.dts
+@@ -182,6 +182,10 @@
+ 	status = "okay";
+ };
+ 
++&watchdog {
++	status = "okay";
++};
++
+ &wifi {
+ 	status = "okay";
+ 	pinctrl-names = "default", "dbdc";

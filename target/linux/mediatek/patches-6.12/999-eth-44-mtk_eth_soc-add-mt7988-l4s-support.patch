@@ -20,7 +20,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: add mt7988 l4s support
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -4520,6 +4520,10 @@ static int mtk_open(struct net_device *d
+@@ -4508,6 +4508,10 @@ static int mtk_open(struct net_device *d
  				target_mac->ppe_idx = 0;
  				gdm_config = soc->reg_map->gdma_to_ppe[0];
  			}
@@ -41,7 +41,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: add mt7988 l4s support
  
  /* GDM Egress Control Register */
  #define MTK_GDMA_EG_CTRL(x)	({ typeof(x) _x = (x); (_x == MTK_GMAC3_ID) ?	\
-@@ -1742,6 +1743,7 @@ struct mtk_eth {
+@@ -1743,6 +1744,7 @@ struct mtk_eth {
  	struct metadata_dst		*dsa_meta[MTK_MAX_DSA_PORTS];
  
  	u8				debug_level;

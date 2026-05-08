@@ -39,15 +39,18 @@ v1: Add xfrm hw offload
  int mtk_foe_entry_set_wdma(struct mtk_eth *eth, struct mtk_foe_entry *entry,
  			   int wdma_idx, int txq, int bss, int wcid,
  			   bool amsdu_en)
-@@ -1399,6 +1421,62 @@ mtk_ppe_check_wdma_path(struct mtk_eth *
+@@ -1400,6 +1422,73 @@ mtk_ppe_check_wdma_path(struct mtk_eth *
  	return 0;
  }
  
-+void mtk_flow_offload_teardown_by_crypto(struct mtk_eth *eth, int id)
++void mtk_flow_offload_teardown_by_tnl(struct mtk_eth *eth, u32 mode, int id)
 +{
 +	int i, j, k;
 +
 +	if (!eth)
++		return;
++
++	if (mode >= MTK_FOE_DEL_MAX)
 +		return;
 +
 +	for (i = 0; i < ARRAY_SIZE(eth->ppe); i++) {
@@ -57,14 +60,21 @@ v1: Add xfrm hw offload
 +			struct mtk_foe_entry *entry = mtk_foe_get_entry(ppe, j);
 +			struct mtk_foe_mac_info *l2 = mtk_foe_entry_l2(eth, entry);
 +			struct flow_offload_tuple tuple;
-+			int type, state, cdrt;
++			int type, state, field;
 +
 +			state = FIELD_GET(MTK_FOE_IB1_STATE, entry->ib1);
 +			if (state != MTK_FOE_STATE_BIND)
 +				continue;
 +
-+			cdrt = FIELD_GET(MTK_FOE_CDRT_IDX, l2->tinfo);
-+			if (cdrt != id)
++			switch (mode) {
++			case MTK_FOE_NPU_DEL:
++				field = FIELD_GET(MTK_FOE_TOPS_ENTRY, l2->tinfo);
++				break;
++			case MTK_FOE_CRYPTO_DEL:
++				field = FIELD_GET(MTK_FOE_CDRT_IDX, l2->tinfo);
++				break;
++			}
++			if (field != id)
 +				continue;
 +
 +			memset(&tuple, 0, sizeof(tuple));
@@ -78,10 +88,10 @@ v1: Add xfrm hw offload
 +			if (type > MTK_PPE_PKT_TYPE_IPV4_DSLITE) {
 +				tuple.l3proto = NFPROTO_IPV6;
 +				tuple.src_port = htons(entry->ipv6.src_port);
-+				tuple.dst_port = htons(entry->ipv6.src_port);
++				tuple.dst_port = htons(entry->ipv6.dest_port);
 +				for (k = 0; k < 4; k++) {
-+					tuple.src_v6.s6_addr32[j] = htonl(entry->ipv6.src_ip[j]);
-+					tuple.dst_v6.s6_addr32[j] = htonl(entry->ipv6.dest_ip[j]);
++					tuple.src_v6.s6_addr32[k] = htonl(entry->ipv6.src_ip[k]);
++					tuple.dst_v6.s6_addr32[k] = htonl(entry->ipv6.dest_ip[k]);
 +				}
 +			} else {
 +				tuple.l3proto = NFPROTO_IPV4;
@@ -93,11 +103,12 @@ v1: Add xfrm hw offload
 +
 +			flow_offload_teardown_by_tuple(&tuple);
 +
-+			pr_info("mtk_ppe: the entry (%x) with cdrt_idx %d has been deleted\n", i, id);
++			pr_info("mtk_ppe: ppe%d: the entry (%x) with id %d in mode %x has been deleted\n",
++				i, j, id, mode);
 +		}
 +	}
 +}
-+EXPORT_SYMBOL(mtk_flow_offload_teardown_by_crypto);
++EXPORT_SYMBOL(mtk_flow_offload_teardown_by_tnl);
 +
  static int
  mtk_flow_offload_teardown_by_roaming(struct mtk_ppe *ppe, u8 *mac)
@@ -113,7 +124,7 @@ v1: Add xfrm hw offload
  #define MTK_PPE_ENTRIES_SHIFT		4
  #define MTK_PPE_ENTRIES			(1024 << MTK_PPE_ENTRIES_SHIFT)
  #define MTK_PPE_HASH_MASK		(MTK_PPE_ENTRIES - 1)
-@@ -101,6 +103,10 @@ enum {
+@@ -101,6 +103,16 @@ enum {
  #define MTK_FOE_UDF_KEEP_DSCP		BIT(10)
  
  #define MTK_FOE_TPORT_IDX		GENMASK(3, 0)
@@ -121,10 +132,16 @@ v1: Add xfrm hw offload
 +#define MTK_FOE_TOPS_ENTRY		GENMASK(13, 8)
 +
 +extern int (*mtk_flow_offload_get_cdrt)(struct xfrm_state *xs);
++
++enum {
++	MTK_FOE_NPU_DEL,
++	MTK_FOE_CRYPTO_DEL,
++	MTK_FOE_DEL_MAX
++};
  
  enum {
  	MTK_FOE_STATE_INVALID,
-@@ -408,6 +414,10 @@ int mtk_foe_entry_set_vlan(struct mtk_et
+@@ -408,6 +420,10 @@ int mtk_foe_entry_set_vlan(struct mtk_et
  			   int vid);
  int mtk_foe_entry_set_pppoe(struct mtk_eth *eth, struct mtk_foe_entry *entry,
  			    int sid);
@@ -135,11 +152,11 @@ v1: Add xfrm hw offload
  int mtk_foe_entry_set_wdma(struct mtk_eth *eth, struct mtk_foe_entry *entry,
  			   int wdma_idx, int txq, int bss, int wcid,
  			   bool amsdu_en);
-@@ -422,5 +432,6 @@ void mtk_foe_entry_get_stats(struct mtk_
+@@ -422,5 +438,6 @@ void mtk_foe_entry_get_stats(struct mtk_
  int mtk_flow_entry_match_len(struct mtk_eth *eth, struct mtk_foe_entry *entry);
  bool mtk_flow_entry_match(struct mtk_eth *eth, struct mtk_flow_entry *entry,
  			  struct mtk_foe_entry *data, int len);
-+void mtk_flow_offload_teardown_by_crypto(struct mtk_eth *eth, int id);
++void mtk_flow_offload_teardown_by_tnl(struct mtk_eth *eth, u32 mode, int id);
  
  #endif
 --- a/drivers/net/ethernet/mediatek/mtk_ppe_offload.c

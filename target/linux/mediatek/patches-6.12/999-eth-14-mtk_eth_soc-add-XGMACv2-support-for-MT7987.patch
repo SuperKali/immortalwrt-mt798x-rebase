@@ -22,31 +22,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -778,14 +778,21 @@ static int mtk_mac_prepare(struct phylin
- {
- 	struct mtk_mac *mac = container_of(config, struct mtk_mac,
- 					   phylink_config);
-+	struct mtk_eth *eth = mac->hw;
- 
- 	if (mtk_is_netsys_v3_or_greater(mac->hw) && mtk_interface_mode_is_xgmii(iface)) {
- 		if (mac->id != MTK_GMAC1_ID)
- 			mtk_m32(mac->hw, XMAC_MCR_TRX_DISABLE,
- 				XMAC_MCR_TRX_DISABLE, MTK_XMAC_MCR(mac->id));
- 
--		mtk_m32(mac->hw, MTK_XGMAC_FORCE_MODE(mac->id) | MTK_XGMAC_FORCE_LINK(mac->id),
--			MTK_XGMAC_FORCE_MODE(mac->id), MTK_XGMAC_STS(mac->id));
-+		if (MTK_HAS_CAPS(eth->soc->caps, MTK_XGMAC_V2))
-+			mtk_m32(mac->hw, XMAC_FORCE_RX_FC_MODE | XMAC_FORCE_TX_FC_MODE |
-+					 XMAC_FORCE_LINK_MODE | XMAC_FORCE_LINK,
-+					 XMAC_FORCE_RX_FC_MODE | XMAC_FORCE_TX_FC_MODE |
-+					 XMAC_FORCE_LINK_MODE, MTK_XMAC_STS_FRC(mac->id));
-+		else
-+			mtk_m32(mac->hw, MTK_XGMAC_FORCE_MODE(mac->id) | MTK_XGMAC_FORCE_LINK(mac->id),
-+				MTK_XGMAC_FORCE_MODE(mac->id), MTK_XGMAC_STS(mac->id));
- 	}
- 
- 	return 0;
-@@ -823,12 +830,16 @@ static void mtk_mac_link_down(struct phy
+@@ -805,12 +805,16 @@ static void mtk_mac_link_down(struct phy
  {
  	struct mtk_mac *mac = container_of(config, struct mtk_mac,
  					   phylink_config);
@@ -64,7 +40,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	}
  }
  
-@@ -1013,6 +1024,7 @@ static void mtk_xgdm_mac_link_up(struct
+@@ -995,6 +999,7 @@ static void mtk_xgdm_mac_link_up(struct
  				 unsigned int mode, phy_interface_t interface,
  				 int speed, int duplex, bool tx_pause, bool rx_pause)
  {
@@ -72,7 +48,7 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  	u32 mcr;
  
  	if (mac->id == MTK_GMAC1_ID)
-@@ -1023,20 +1035,37 @@ static void mtk_xgdm_mac_link_up(struct
+@@ -1005,20 +1010,37 @@ static void mtk_xgdm_mac_link_up(struct
  	mdelay(20);
  	mtk_m32(mac->hw, XMAC_GLB_CNTCLR, XMAC_GLB_CNTCLR, MTK_XMAC_CNT_CTRL(mac->id));
  
@@ -122,3 +98,16 @@ Signed-off-by: Bo-Cun Chen <bc-bocun.chen@mediatek.com>
  }
  
  static void mtk_mac_link_up(struct phylink_config *config,
+@@ -4965,6 +4987,12 @@ static int mtk_hw_init(struct mtk_eth *e
+ 			if (eth->soc->caps == MT7987_CAPS && i == MTK_GMAC3_ID)
+ 				continue;
+ 
++			if (MTK_HAS_CAPS(eth->soc->caps, MTK_XGMAC_V2))
++				mtk_m32(eth, XMAC_FORCE_RX_FC_MODE | XMAC_FORCE_TX_FC_MODE |
++					     XMAC_FORCE_LINK_MODE | XMAC_FORCE_LINK,
++					     XMAC_FORCE_RX_FC_MODE | XMAC_FORCE_TX_FC_MODE |
++					     XMAC_FORCE_LINK_MODE, MTK_XMAC_STS_FRC(i));
++
+ 			mtk_m32(eth, XMAC_MCR_TRX_DISABLE, XMAC_MCR_TRX_DISABLE, MTK_XMAC_MCR(i));
+ 		}
+ 	}

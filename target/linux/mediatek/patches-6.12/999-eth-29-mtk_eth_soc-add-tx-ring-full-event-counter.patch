@@ -20,7 +20,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: add tx ring full event counter
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -2168,6 +2168,7 @@ static netdev_tx_t mtk_start_xmit(struct
+@@ -2142,6 +2142,7 @@ static netdev_tx_t mtk_start_xmit(struct
  		netif_tx_stop_all_queues(dev);
  		netif_err(eth, tx_queued, dev,
  			  "Tx Ring full when queue awake!\n");
@@ -28,7 +28,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: add tx ring full event counter
  		spin_unlock(&eth->page_lock);
  		return NETDEV_TX_BUSY;
  	}
-@@ -2213,8 +2214,10 @@ send:
+@@ -2187,8 +2188,10 @@ send:
  		}
  	}
  
@@ -40,7 +40,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: add tx ring full event counter
  
  	spin_unlock(&eth->page_lock);
  
-@@ -3065,6 +3068,7 @@ static int mtk_tx_alloc(struct mtk_eth *
+@@ -3039,6 +3042,7 @@ static int mtk_tx_alloc(struct mtk_eth *
  
  	ring->dma_size = ring_size;
  	atomic_set(&ring->free_count, ring_size - 2);
@@ -50,7 +50,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: add tx ring full event counter
  	ring->last_free_ptr = (u32)(ring->phys + TX_DESC_OFS(eth, ring_size - 1));
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.h
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.h
-@@ -1068,6 +1068,7 @@ struct mtk_tx_ring {
+@@ -1069,6 +1069,7 @@ struct mtk_tx_ring {
  	u32 last_free_ptr;
  	u16 thresh;
  	atomic_t free_count;

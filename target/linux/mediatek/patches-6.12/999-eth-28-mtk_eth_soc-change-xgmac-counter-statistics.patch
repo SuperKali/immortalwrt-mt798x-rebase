@@ -19,7 +19,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: change xgmac counter statistics
 
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -1304,6 +1304,9 @@ void mtk_stats_update_mac(struct mtk_mac
+@@ -1278,6 +1278,9 @@ void mtk_stats_update_mac(struct mtk_mac
  	struct mtk_hw_stats *hw_stats = mac->hw_stats;
  	struct mtk_eth *eth = mac->hw;
  
@@ -29,7 +29,7 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: change xgmac counter statistics
  	u64_stats_update_begin(&hw_stats->syncp);
  
  	if (MTK_HAS_CAPS(eth->soc->caps, MTK_SOC_MT7628)) {
-@@ -1316,51 +1319,86 @@ void mtk_stats_update_mac(struct mtk_mac
+@@ -1290,51 +1293,86 @@ void mtk_stats_update_mac(struct mtk_mac
  	} else {
  		const struct mtk_reg_map *reg_map = eth->soc->reg_map;
  		unsigned int offs = hw_stats->reg_offset;
