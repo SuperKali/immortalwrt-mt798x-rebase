@@ -821,6 +821,7 @@ setup_model()
 	tplink,fr365-v1 |\
 	ubnt,unifi-6-plus |\
 	unielec,u7981* |\
+	viettel,32x6 |\
 	viettel,nr3053 |\
 	wavlink,wl-wn551x3 |\
 	wavlink,wl-wn586x3* |\
@@ -831,6 +832,7 @@ setup_model()
 	xiaomi,mi-router-wr30u* |\
 	yuncore,ax835 |\
 	zbtlink,zbt-z810* |\
+	zhao,7981r128 |\
 	zyxel,nwa50ax-pro |\
 	*7981*)
 		MT7981_whnat $num_of_wifi $usbnet
