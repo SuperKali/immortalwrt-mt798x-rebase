@@ -1,0 +1,74 @@
+/* LinkUp OS theme — UniFi (Ubiquiti) style: light-first, clean, blue accent. */
+:root {
+  --radius: 0.625rem;
+  --font-sans: 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono Variable', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --bg: #f4f5f7;
+  --card: #ffffff;
+  --muted: #eef1f4;
+  --fg: #1f2329;
+  --fg-2: #6b727c;
+  --border: #e4e7ec;
+  --ring: #0066ff;
+
+  --accent: #0066ff;
+  --accent-fg: #ffffff;
+  --accent-soft: #e8f0ff;
+
+  --success: #12a36b;
+  --warning: #e8920c;
+  --info: #0066ff;
+  --destructive: #e5484d;
+
+  --chart-1: #4c9aff;
+  --chart-2: #0066ff;
+  --chart-3: #0049b8;
+  --chart-4: #12a36b;
+  --chart-5: #6b727c;
+  --chart-6: #e8920c;
+
+  --q-ex: #12a36b;
+  --q-good: #e8920c;
+  --q-weak: #f0760c;
+  --q-poor: #e5484d;
+  --q-none: #d7dbe0;
+
+  --hero-from: #0066ff;
+  --hero-to: #0049b8;
+}
+
+.dark {
+  --bg: #101216;
+  --card: #191c22;
+  --muted: #232730;
+  --fg: #f0f2f5;
+  --fg-2: #9098a3;
+  --border: #2a2f37;
+  --ring: #3b87ff;
+
+  --accent: #3b87ff;
+  --accent-fg: #ffffff;
+  --accent-soft: #17243c;
+
+  --success: #28b67e;
+  --warning: #e9a23b;
+  --info: #3b87ff;
+  --destructive: #f0595e;
+
+  --chart-1: #6fb0ff;
+  --chart-2: #3b87ff;
+  --chart-3: #2f6fe0;
+  --chart-4: #28b67e;
+  --chart-5: #9098a3;
+  --chart-6: #e9a23b;
+
+  --q-ex: #28b67e;
+  --q-good: #e9a23b;
+  --q-weak: #f0843b;
+  --q-poor: #f0595e;
+  --q-none: #2c313a;
+
+  --hero-from: #2f6fe0;
+  --hero-to: #1c4fb0;
+}

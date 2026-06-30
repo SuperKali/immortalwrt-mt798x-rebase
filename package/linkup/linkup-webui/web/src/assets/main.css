@@ -1,0 +1,43 @@
+@import './tokens.css';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #app { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-feature-settings: 'cv11' 1, 'tnum' 1;
+  letter-spacing: -0.006em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-tap-highlight-color: transparent;
+}
+* { box-sizing: border-box; }
+.font-mono { font-feature-settings: normal; }
+
+@layer components {
+  .lk-card {
+    @apply bg-card border border-border rounded-xl shadow-card;
+  }
+  .lk-input {
+    @apply w-full bg-card border border-border rounded-lg px-3 py-2 text-sm text-fg
+           outline-none transition focus:border-accent
+           focus:shadow-[0_0_0_3px_var(--accent-soft)];
+  }
+  .lk-btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-medium
+           transition active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none;
+  }
+  .lk-btn-primary { @apply lk-btn bg-accent text-white shadow-sm hover:brightness-110; }
+  .lk-btn-ghost { @apply lk-btn bg-muted text-fg hover:bg-border; }
+  .lk-btn-danger { @apply lk-btn bg-q-poor text-white shadow-sm hover:brightness-110; }
+  .lk-label { @apply block text-xs font-medium text-fg2 mb-1.5; }
+  .lk-pill { @apply inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium; }
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
+::-webkit-scrollbar-track { background: transparent; }

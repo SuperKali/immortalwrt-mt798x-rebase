@@ -1,0 +1,22 @@
+#!/bin/sh
+# LinkUp OS web UI: enable uhttpd /ubus endpoint + serve the SPA at / .
+changed=0
+
+if ! uci -q get uhttpd.main.ubus_prefix >/dev/null; then
+	uci set uhttpd.main.ubus_prefix='/ubus'
+	uci set uhttpd.main.ubus_socket='/var/run/ubus/ubus.sock'
+	changed=1
+fi
+
+# Redirect the document root to the SPA (leave LuCI untouched at /cgi-bin/luci/).
+if [ ! -e /www/index.html ] || ! grep -q '/linkup/' /www/index.html 2>/dev/null; then
+	cat > /www/index.html <<'EOF'
+<!DOCTYPE html><html><head>
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="refresh" content="0; url=/linkup/">
+</head><body><a href="/linkup/">LinkUP OS</a></body></html>
+EOF
+fi
+
+[ "$changed" = 1 ] && { uci commit uhttpd; /etc/init.d/uhttpd reload; }
+exit 0
