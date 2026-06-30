@@ -1,6 +1,6 @@
---- a/drivers/net/ethernet/mediatek/mtk_hnat/hnat_debugfs.c	2026-03-28 21:21:10.844709027 +0100
-+++ b/drivers/net/ethernet/mediatek/mtk_hnat/hnat_debugfs.c	2026-03-28 21:21:19.114743453 +0100
-@@ -3773,19 +3773,19 @@
+--- a/drivers/net/ethernet/mediatek/mtk_hnat/hnat_debugfs.c	2026-06-29 21:43:41.994311037 +0200
++++ b/drivers/net/ethernet/mediatek/mtk_hnat/hnat_debugfs.c	2026-06-29 21:43:41.994311037 +0200
+@@ -4314,15 +4314,15 @@
  			    &hnat_whnat_fops);
  	debugfs_create_file("cpu_reason", 0444, root, h,
  			    &cpu_reason_fops);
@@ -17,6 +17,12 @@
 -	debugfs_create_file("hook_toggle", 0444, root, h,
 +	debugfs_create_file("hook_toggle", 0644, root, h,
  			    &hnat_hook_toggle_fops);
+ 	debugfs_create_file("mcast_hook_toggle", 0444, root, h,
+ 			    &hnat_mcast_hook_toggle_fops);
+@@ -4330,9 +4330,9 @@
+ 			    &hnat_mcast_blist_fops);
+ 	debugfs_create_file("mcast_member", 0444, root, h,
+ 			    &hnat_mcast_member_fops);
 -	debugfs_create_file("mape_toggle", 0444, root, h,
 +	debugfs_create_file("mape_toggle", 0644, root, h,
  			    &hnat_mape_toggle_fops);
@@ -25,7 +31,7 @@
  			    &hnat_qos_toggle_fops);
  	debugfs_create_file("hnat_version", 0444, root, h,
  			    &hnat_version_fops);
-@@ -3795,19 +3795,19 @@
+@@ -4342,19 +4342,19 @@
  			    &hnat_lan_if_fops);
  	debugfs_create_file("hnat_lan2_if", 0444, root, h,
  			    &hnat_lan2_if_fops);
@@ -50,5 +56,5 @@
 -	debugfs_create_file("l4s_toggle", 0444, root, h,
 +	debugfs_create_file("l4s_toggle", 0644, root, h,
  			    &hnat_l4s_toggle_fops);
- 
- 	/* init manual_api debugfs node */
+ 	debugfs_create_file("proto_3tuple", 0644, root, h,
+ 			    &hnat_proto_3tuple_fops);
