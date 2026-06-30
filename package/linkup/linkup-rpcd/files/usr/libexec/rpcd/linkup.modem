@@ -1,0 +1,75 @@
+#!/bin/sh
+# LinkUp OS - linkup.modem rpcd object
+# status / bands_get / bands_set / at / reconnect / bodysar_get / bodysar_set
+
+. /usr/share/linkup/lib.sh
+
+case "$1" in
+list)
+	json_init
+	json_add_object "status"; json_close_object
+	json_add_object "bands_get"; json_close_object
+	json_add_object "bands_set"
+		json_add_string "rat" "lte"
+		json_add_array "bands"; json_close_array
+	json_close_object
+	json_add_object "at"; json_add_string "command" ""; json_close_object
+	json_add_object "reconnect"; json_close_object
+	json_add_object "bodysar_get"; json_close_object
+	json_add_object "bodysar_set"; json_add_boolean "enabled" 1; json_close_object
+	json_dump
+	;;
+call)
+	case "$2" in
+	status)
+		linkup_modem_status_json
+		;;
+	bands_get)
+		linkup_bands_get_json
+		;;
+	bands_set)
+		read -r input
+		rat=$(printf '%s' "$input" | jq -r '.rat // "lte"')
+		bands=$(printf '%s' "$input" | jq -r '(.bands // []) | map(tostring) | join(" ")')
+		case "$rat" in
+			lte) sub=setbands ;;
+			nsa5g|nsa|5gnsa) sub=setbands5gnsa ;;
+			sa5g|sa|5gsa) sub=setbands5gsa ;;
+			*) linkup_err "invalid rat"; exit 0 ;;
+		esac
+		[ -n "$bands" ] || bands="default"
+		linkup_run_locked /usr/bin/modemband.sh "$sub" "$bands" >/dev/null 2>&1
+		jq -n --arg rat "$rat" --arg applied "$bands" \
+			'{ok:true,rat:$rat,applied:$applied,note:"WAN reconnects to apply"}'
+		;;
+	at)
+		read -r input
+		cmd=$(printf '%s' "$input" | jq -r '.command // empty')
+		[ -n "$cmd" ] || { linkup_err "no command"; exit 0; }
+		out=$(linkup_at "$cmd")
+		jq -n --arg c "$cmd" --arg o "$out" '{ok:true,command:$c,response:$o}'
+		;;
+	reconnect)
+		ubus call network.interface.wan down >/dev/null 2>&1
+		sleep 1
+		ubus call network.interface.wan up >/dev/null 2>&1
+		echo '{"ok":true}'
+		;;
+	bodysar_get)
+		out=$(linkup_at "AT+BODYSAREN?")
+		en=$(printf '%s' "$out" | sed -n 's/.*BODYSAREN:[[:space:]]*\([0-9]\).*/\1/p' | head -1)
+		jq -n --arg raw "$out" --arg en "${en:-}" \
+			'{ok:true, enabled:(if $en=="" then null else ($en=="1") end), raw:$raw}'
+		;;
+	bodysar_set)
+		read -r input
+		en=$(printf '%s' "$input" | jq -r 'if .enabled then "1" else "0" end')
+		out=$(linkup_at "AT+BODYSAREN=$en")
+		jq -n --arg raw "$out" --arg en "$en" '{ok:true,enabled:($en=="1"),raw:$raw}'
+		;;
+	*)
+		linkup_err "unknown method"
+		;;
+	esac
+	;;
+esac

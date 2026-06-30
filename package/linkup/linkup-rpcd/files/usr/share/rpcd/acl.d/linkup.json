@@ -1,0 +1,39 @@
+{
+	"linkup": {
+		"description": "LinkUp OS web UI session access",
+		"read": {
+			"ubus": {
+				"linkup.modem": [ "status", "bands_get", "bodysar_get" ],
+				"linkup.sim": [ "sms_list", "sms_count", "esim_chip", "esim_profiles", "esim_notifications" ],
+				"linkup.net": [ "wan_get", "wan_status", "apn_suggest", "ping", "host_traffic", "lan_links" ],
+				"linkup.wifi": [ "get", "clients" ],
+				"linkup.system": [ "info", "needs_password", "firmware_validate", "logs" ],
+				"luci-rpc": [ "getDHCPLeases", "getHostHints", "getBoardJSON", "getNetworkDevices", "getWirelessDevices" ],
+				"iwinfo": [ "info", "assoclist", "scan", "freqlist", "countrylist" ],
+				"network.interface": [ "dump", "status" ],
+				"network.device": [ "status" ],
+				"network.wireless": [ "status" ],
+				"network": [ "get_proto_handlers" ],
+				"system": [ "board", "info" ],
+				"uci": [ "get", "state" ],
+				"session": [ "access", "get" ]
+			},
+			"uci": [ "network", "wireless", "dhcp", "firewall", "system", "3ginfo", "modemband", "sms_tool_js", "lpac" ]
+		},
+		"write": {
+			"ubus": {
+				"linkup.modem": [ "bands_set", "at", "reconnect", "bodysar_set" ],
+				"linkup.sim": [ "sms_send", "sms_delete", "ussd_send", "esim_enable", "esim_disable", "esim_delete", "esim_download", "esim_process" ],
+				"linkup.net": [ "wan_set", "reconnect" ],
+				"linkup.wifi": [ "set", "macfilter_set", "client_set", "iface_add", "iface_delete", "wps", "kick" ],
+				"linkup.system": [ "set_password", "reboot", "sysupgrade" ],
+				"session": [ "destroy", "set" ],
+				"network": [ "reload" ],
+				"network.interface": [ "up", "down" ],
+				"system": [ "reboot", "validate_firmware_image" ],
+				"uci": [ "set", "add", "delete", "commit", "apply", "order", "rename" ]
+			},
+			"uci": [ "network", "wireless", "dhcp", "firewall", "system", "3ginfo", "modemband", "lpac" ]
+		}
+	}
+}

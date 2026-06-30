@@ -1,0 +1,110 @@
+#!/bin/sh
+# LinkUp OS - linkup.sim rpcd object (SMS / USSD / eSIM via lpac)
+. /usr/share/linkup/lib.sh
+
+PORT=$(linkup_at_port)
+
+case "$1" in
+list)
+	json_init
+	json_add_object "sms_list"; json_add_string "storage" "SM"; json_close_object
+	json_add_object "sms_count"; json_add_string "storage" "SM"; json_close_object
+	json_add_object "sms_send"; json_add_string "number" ""; json_add_string "text" ""; json_close_object
+	json_add_object "sms_delete"; json_add_string "index" "all"; json_close_object
+	json_add_object "ussd_send"; json_add_string "code" ""; json_close_object
+	json_add_object "esim_chip"; json_close_object
+	json_add_object "esim_profiles"; json_close_object
+	json_add_object "esim_enable"; json_add_string "iccid" ""; json_close_object
+	json_add_object "esim_disable"; json_add_string "iccid" ""; json_close_object
+	json_add_object "esim_delete"; json_add_string "iccid" ""; json_close_object
+	json_add_object "esim_download"
+		json_add_string "activation" ""; json_add_string "smdp" ""
+		json_add_string "matchingid" ""; json_add_string "confirmation" ""
+	json_close_object
+	json_add_object "esim_notifications"; json_close_object
+	json_add_object "esim_process"; json_add_string "seq" "all"; json_close_object
+	json_dump
+	;;
+call)
+	case "$2" in
+	sms_list)
+		read -r input 2>/dev/null
+		stor=$(printf '%s' "$input" | jq -r '.storage // "SM"' 2>/dev/null)
+		out=$( ( flock -x 9; timeout 25 sms_tool_utf8 -d "$PORT" -s "$stor" -j -f "%Y-%m-%d %H:%M:%S" recv 2>/dev/null ) 9>"$LINKUP_LOCK" )
+		printf '%s' "$out" | jq -c '{ok:true, messages: (if type=="object" then (.msg // []) else . end)}' 2>/dev/null || jq -n --arg r "$out" '{ok:true, messages:[], raw:$r}'
+		;;
+	sms_count)
+		read -r input 2>/dev/null
+		stor=$(printf '%s' "$input" | jq -r '.storage // "SM"' 2>/dev/null)
+		out=$( ( flock -x 9; timeout 15 sms_tool -d "$PORT" -s "$stor" status 2>/dev/null ) 9>"$LINKUP_LOCK" )
+		jq -n --arg r "$out" '{ok:true, status:$r}'
+		;;
+	sms_send)
+		read -r input
+		num=$(printf '%s' "$input" | jq -r '.number // empty')
+		txt=$(printf '%s' "$input" | jq -r '.text // empty')
+		[ -n "$num" ] && [ -n "$txt" ] || { linkup_err "number and text required"; exit 0; }
+		out=$( ( flock -x 9; timeout 30 sms_tool_utf8 -d "$PORT" send "$num" "$txt" 2>&1 ) 9>"$LINKUP_LOCK" )
+		jq -n --arg r "$out" '{ok:true, result:$r}'
+		;;
+	sms_delete)
+		read -r input
+		idx=$(printf '%s' "$input" | jq -r '.index // "all"')
+		out=$( ( flock -x 9; timeout 15 sms_tool -d "$PORT" delete "$idx" 2>&1 ) 9>"$LINKUP_LOCK" )
+		jq -n --arg r "$out" '{ok:true, result:$r}'
+		;;
+	ussd_send)
+		read -r input
+		code=$(printf '%s' "$input" | jq -r '.code // empty')
+		[ -n "$code" ] || { linkup_err "code required"; exit 0; }
+		out=$( ( flock -x 9; timeout 35 sms_tool -d "$PORT" ussd "$code" 2>/dev/null ) 9>"$LINKUP_LOCK" )
+		jq -n --arg c "$code" --arg r "$out" '{ok:true, code:$c, response:$r}'
+		;;
+	esim_chip)
+		out=$(linkup_lpac chip info)
+		printf '%s' "$out" | jq -s -c 'last | if type=="object" then {ok:(.payload.code==0), message:.payload.message, data:.payload.data} else {ok:false} end' 2>/dev/null || jq -n --arg r "$out" '{ok:false, raw:$r}'
+		;;
+	esim_profiles)
+		out=$(linkup_lpac profile list)
+		printf '%s' "$out" | jq -s -c 'last | if type=="object" then {ok:(.payload.code==0), message:.payload.message, profiles:(.payload.data // [])} else {ok:false} end' 2>/dev/null || jq -n --arg r "$out" '{ok:false, raw:$r}'
+		;;
+	esim_enable|esim_disable|esim_delete)
+		read -r input
+		iccid=$(printf '%s' "$input" | jq -r '.iccid // empty')
+		[ -n "$iccid" ] || { linkup_err "iccid required"; exit 0; }
+		out=$(linkup_lpac profile "${2#esim_}" "$iccid")
+		printf '%s' "$out" | jq -s -c 'last | {ok:(.payload.code==0), message:.payload.message}' 2>/dev/null || jq -n --arg r "$out" '{ok:false, raw:$r}'
+		;;
+	esim_download)
+		read -r input
+		act=$(printf '%s' "$input" | jq -r '.activation // empty')
+		if [ -n "$act" ]; then
+			out=$(linkup_lpac profile download -a "$act")
+		else
+			smdp=$(printf '%s' "$input" | jq -r '.smdp // empty')
+			mid=$(printf '%s' "$input" | jq -r '.matchingid // empty')
+			conf=$(printf '%s' "$input" | jq -r '.confirmation // empty')
+			[ -n "$smdp" ] || { linkup_err "activation code or smdp required"; exit 0; }
+			set -- profile download -s "$smdp"
+			[ -n "$mid" ] && set -- "$@" -m "$mid"
+			[ -n "$conf" ] && set -- "$@" -c "$conf"
+			out=$(linkup_lpac "$@")
+		fi
+		printf '%s' "$out" | jq -s -c 'last | {ok:(.payload.code==0), message:.payload.message, data:.payload.data}' 2>/dev/null || jq -n --arg r "$out" '{ok:false, raw:$r}'
+		;;
+	esim_notifications)
+		out=$(linkup_lpac notification list)
+		printf '%s' "$out" | jq -s -c 'last | {ok:(.payload.code==0), notifications:(.payload.data // [])}' 2>/dev/null || jq -n --arg r "$out" '{ok:false, raw:$r}'
+		;;
+	esim_process)
+		read -r input
+		seq=$(printf '%s' "$input" | jq -r '.seq // "all"')
+		out=$(linkup_lpac notification process "$seq")
+		printf '%s' "$out" | jq -s -c 'last | {ok:(.payload.code==0), message:.payload.message}' 2>/dev/null || jq -n --arg r "$out" '{ok:false, raw:$r}'
+		;;
+	*)
+		linkup_err "unknown method"
+		;;
+	esac
+	;;
+esac

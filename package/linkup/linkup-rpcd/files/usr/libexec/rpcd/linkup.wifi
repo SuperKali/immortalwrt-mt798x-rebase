@@ -1,0 +1,174 @@
+#!/bin/sh
+# LinkUp OS - linkup.wifi rpcd object (mtwifi radios / ifaces / stations)
+. /usr/share/linkup/lib.sh
+
+TAB="$(printf '\t')"
+
+case "$1" in
+list)
+	json_init
+	json_add_object "get"; json_close_object
+	json_add_object "set"; json_add_string "section" ""; json_add_object "options"; json_close_object; json_close_object
+	json_add_object "macfilter_set"; json_add_string "section" ""; json_add_string "mode" ""; json_close_object
+	json_add_object "client_set"; json_add_string "section" ""; json_add_string "ssid" ""; json_add_string "encryption" ""; json_add_string "key" ""; json_close_object
+	json_add_object "iface_add"; json_add_string "device" ""; json_close_object
+	json_add_object "iface_delete"; json_add_string "section" ""; json_close_object
+	json_add_object "wps"; json_add_string "ifname" ""; json_close_object
+	json_add_object "kick"; json_add_string "ifname" ""; json_add_string "mac" ""; json_close_object
+	json_add_object "clients"; json_add_string "ifname" ""; json_close_object
+	json_dump
+	;;
+call)
+	case "$2" in
+	get)
+		wcfg=$(ubus call uci get '{"config":"wireless"}' 2>/dev/null)
+		wstat=$(ubus call network.wireless status 2>/dev/null)
+		[ -n "$wcfg" ] || { linkup_err "uci read failed"; exit 0; }
+		[ -n "$wstat" ] || wstat='{}'
+		printf '%s' "$wcfg" | jq -c --argjson w "$wstat" '
+			.values as $v | {
+			ok:true,
+			radios: [ $v | to_entries[] | select(.value[".type"]=="wifi-device") | .key as $rk | {
+				name:$rk, band:(.value.band//null), channel:(.value.channel//"auto"),
+				htmode:(.value.htmode//null), txpower:(.value.txpower//null),
+				country:(.value.country//null), phy:(.value.phy//null),
+				bandsteering:(.value.bandsteering//"0"), mu_beamformer:(.value.mu_beamformer//"0"),
+				noscan:(.value.noscan//"0"), disabled:(.value.disabled//"0"), up:($w[$rk].up // false) } ],
+			ifaces: [ $v | to_entries[] | select(.value[".type"]=="wifi-iface") | .key as $ik | (.value.device) as $dev | {
+				name:$ik, device:$dev, network:(.value.network//null), mode:(.value.mode//"ap"),
+				ssid:(.value.ssid//null), encryption:(.value.encryption//"none"),
+				key:(.value.key//null), hidden:(.value.hidden//"0"), isolate:(.value.isolate//"0"),
+				ieee80211k:(.value.ieee80211k//"0"), ieee80211w:(.value.ieee80211w//null),
+				mumimo_dl:(.value.mumimo_dl//"0"), mumimo_ul:(.value.mumimo_ul//"0"),
+				macfilter:(.value.macfilter//"disable"), maclist:(.value.maclist//[]),
+				disabled:(.value.disabled//"0"),
+				ifname:( ($w[$dev].interfaces // []) | map(select(.section==$ik)) | (.[0].ifname // null) ) } ] }' \
+			2>/dev/null || linkup_err "parse failed"
+		;;
+	set)
+		read -r input
+		section=$(printf '%s' "$input" | jq -r '.section // empty')
+		[ -n "$section" ] || { linkup_err "section required"; exit 0; }
+		case "$section" in *[!A-Za-z0-9_]*) linkup_err "bad section"; exit 0 ;; esac
+		printf '%s' "$input" | jq -r '.options // {} | to_entries[] | "\(.key)\t\(.value)"' | while IFS="$TAB" read -r k v; do
+			case "$k" in
+				''|*[!a-z0-9_]*) continue ;;
+			esac
+			if [ -z "$v" ] || [ "$v" = "null" ]; then uci -q delete "wireless.$section.$k"
+			else uci set "wireless.$section.$k=$v"; fi
+		done
+		uci commit wireless
+		( wifi reload ) >/dev/null 2>&1 &
+		echo '{"ok":true,"note":"WiFi reloading"}'
+		;;
+	macfilter_set)
+		read -r input
+		section=$(printf '%s' "$input" | jq -r '.section // empty')
+		[ -n "$section" ] || { linkup_err "section required"; exit 0; }
+		case "$section" in *[!A-Za-z0-9_]*) linkup_err "bad section"; exit 0 ;; esac
+		mode=$(printf '%s' "$input" | jq -r '.mode // "disable"')
+		case "$mode" in allow|deny|disable) : ;; *) mode=disable ;; esac
+		uci set "wireless.$section.macfilter=$mode"
+		uci -q delete "wireless.$section.maclist"
+		printf '%s' "$input" | jq -r '.macs[]? // empty' | while read -r m; do
+			case "$m" in
+				*[!0-9A-Fa-f:]*|'') continue ;;
+				*) uci add_list "wireless.$section.maclist=$m" ;;
+			esac
+		done
+		uci commit wireless
+		( wifi reload ) >/dev/null 2>&1 &
+		echo '{"ok":true,"note":"MAC filter applied"}'
+		;;
+	client_set)
+		read -r input
+		section=$(printf '%s' "$input" | jq -r '.section // empty')
+		[ -n "$section" ] || { linkup_err "section required"; exit 0; }
+		case "$section" in *[!A-Za-z0-9_]*) linkup_err "bad section"; exit 0 ;; esac
+		ssid=$(printf '%s' "$input" | jq -r '.ssid // empty')
+		[ -n "$ssid" ] || { linkup_err "ssid required"; exit 0; }
+		enc=$(printf '%s' "$input" | jq -r '.encryption // "psk2"')
+		case "$enc" in none|psk2|psk-mixed|sae|sae-mixed) : ;; *) enc=psk2 ;; esac
+		key=$(printf '%s' "$input" | jq -r '.key // empty')
+		# switch wifi-iface to station (apcli) mode, attach to wwan uplink
+		uci set "wireless.$section.mode=sta"
+		uci set "wireless.$section.ssid=$ssid"
+		uci set "wireless.$section.encryption=$enc"
+		if [ "$enc" = "none" ] || [ -z "$key" ]; then uci -q delete "wireless.$section.key"
+		else uci set "wireless.$section.key=$key"; fi
+		uci set "wireless.$section.network=wwan"
+		# ensure a DHCP wwan uplink interface exists
+		if ! uci -q get network.wwan >/dev/null; then
+			uci set network.wwan=interface; uci set network.wwan.proto=dhcp
+		fi
+		# add wwan to the 'wan' firewall zone (NAT out) if present
+		zone=$(uci show firewall 2>/dev/null | sed -n "s/^firewall\.\([^.]*\)\.name='wan'$/\1/p" | head -1)
+		if [ -n "$zone" ]; then
+			uci -q del_list "firewall.$zone.network=wwan"
+			uci add_list "firewall.$zone.network=wwan"
+		fi
+		uci commit network; uci commit firewall; uci commit wireless
+		( /etc/init.d/firewall reload; wifi reload ) >/dev/null 2>&1 &
+		echo '{"ok":true,"note":"Client mode applied — connecting to upstream"}'
+		;;
+	iface_add)
+		read -r input
+		device=$(printf '%s' "$input" | jq -r '.device // empty')
+		[ -n "$device" ] || { linkup_err "device required"; exit 0; }
+		case "$device" in *[!A-Za-z0-9_]*) linkup_err "bad device"; exit 0 ;; esac
+		[ "$(uci -q get "wireless.$device")" = "wifi-device" ] || { linkup_err "no such radio"; exit 0; }
+		sec=$(uci add wireless wifi-iface 2>/dev/null)
+		[ -n "$sec" ] || { linkup_err "add failed"; exit 0; }
+		uci set "wireless.$sec.device=$device"
+		uci set "wireless.$sec.mode=ap"
+		uci set "wireless.$sec.network=lan"
+		uci set "wireless.$sec.ssid=LinkUP-new"
+		uci set "wireless.$sec.encryption=none"
+		uci set "wireless.$sec.disabled=1"
+		uci commit wireless
+		json_init; json_add_boolean ok 1; json_add_string section "$sec"; json_dump
+		;;
+	iface_delete)
+		read -r input
+		section=$(printf '%s' "$input" | jq -r '.section // empty')
+		[ -n "$section" ] || { linkup_err "section required"; exit 0; }
+		case "$section" in *[!A-Za-z0-9_]*) linkup_err "bad section"; exit 0 ;; esac
+		[ "$(uci -q get "wireless.$section")" = "wifi-iface" ] || { linkup_err "no such iface"; exit 0; }
+		uci -q delete "wireless.$section"
+		uci commit wireless
+		( wifi reload ) >/dev/null 2>&1 &
+		echo '{"ok":true,"note":"network removed"}'
+		;;
+	wps)
+		read -r input
+		ifn=$(printf '%s' "$input" | jq -r '.ifname // empty')
+		case "$ifn" in ''|*[!a-zA-Z0-9._-]*) linkup_err "bad ifname"; exit 0 ;; esac
+		if command -v hostapd_cli >/dev/null 2>&1; then
+			hostapd_cli -i "$ifn" wps_pbc >/dev/null 2>&1 && { echo '{"ok":true,"note":"WPS PBC active 2min"}'; exit 0; }
+		fi
+		linkup_err "WPS not supported by this driver"
+		;;
+	kick)
+		read -r input
+		ifn=$(printf '%s' "$input" | jq -r '.ifname // empty')
+		mac=$(printf '%s' "$input" | jq -r '.mac // empty')
+		case "$ifn" in ''|*[!a-zA-Z0-9._-]*) linkup_err "bad ifname"; exit 0 ;; esac
+		case "$mac" in ''|*[!0-9A-Fa-f:]*) linkup_err "bad mac"; exit 0 ;; esac
+		iwpriv "$ifn" set "DisConnectSta=$mac" >/dev/null 2>&1
+		echo '{"ok":true,"note":"station disconnected"}'
+		;;
+	clients)
+		read -r input 2>/dev/null
+		ifn=$(printf '%s' "$input" | jq -r '.ifname // empty' 2>/dev/null)
+		if [ -n "$ifn" ]; then ifaces="$ifn"
+		else ifaces=$(ubus call network.wireless status 2>/dev/null | jq -r '[.[].interfaces[].ifname]|unique|.[]' 2>/dev/null); fi
+		for i in $ifaces; do
+			ubus call iwinfo assoclist "{\"device\":\"$i\"}" 2>/dev/null | jq -c --arg ifn "$i" '(.results//[])[] | {ifname:$ifn, mac:.mac, signal:.signal, rx_rate:(.rx.rate//null), tx_rate:(.tx.rate//null), nss:(.tx.nss//.rx.nss//null), mcs:(.tx.mcs//null), std:(if .tx.eht then "Wi-Fi 7" elif .tx.he then "Wi-Fi 6" elif .tx.vht then "Wi-Fi 5" elif .tx.ht then "Wi-Fi 4" else "Wi-Fi" end), connected_ms:(.connected_time//null)}'
+		done | jq -s -c '{ok:true, clients:.}'
+		;;
+	*)
+		linkup_err "unknown method"
+		;;
+	esac
+	;;
+esac

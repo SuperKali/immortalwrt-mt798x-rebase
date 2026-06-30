@@ -1,0 +1,151 @@
+#!/bin/sh
+# LinkUp OS - linkup.net rpcd object (cellular WAN config + status)
+. /usr/share/linkup/lib.sh
+
+APN_DB="/etc/atc/apn_database.json"
+TAB="$(printf '\t')"
+
+case "$1" in
+list)
+	json_init
+	json_add_object "wan_get"; json_close_object
+	json_add_object "wan_status"; json_close_object
+	json_add_object "wan_set"
+		json_add_string "apn" ""; json_add_string "auth" "0"; json_add_string "pdp" "IP"
+		json_add_string "pincode" ""; json_add_string "username" ""; json_add_string "password" ""
+		json_add_string "custom_at" ""; json_add_string "auto_apn" "0"
+	json_close_object
+	json_add_object "reconnect"; json_close_object
+	json_add_object "apn_suggest"; json_add_string "mcc" ""; json_add_string "mnc" ""; json_close_object
+	json_add_object "ping"; json_add_string "host" ""; json_add_string "count" "3"; json_close_object
+	json_add_object "host_traffic"; json_close_object
+	json_add_object "lan_links"; json_close_object
+	json_dump
+	;;
+call)
+	case "$2" in
+	wan_get)
+		# generic: return proto + ALL network.wan options (any OpenWrt protocol)
+		ubus call uci get '{"config":"network","section":"wan"}' 2>/dev/null | jq -c '
+			.values as $w | {ok:true, proto:($w.proto//"dhcp"),
+			  options:( $w | with_entries(select(.key|startswith(".")|not)) ) }' \
+			2>/dev/null || linkup_err "uci read failed"
+		;;
+	wan_status)
+		ubus call network.interface.wan status 2>/dev/null | jq -c '{ok:true, up:(.up//false), available:(.available//false),
+			proto:(.proto//null), uptime:(.uptime//0), device:(.l3_device//.device//null),
+			ipv4:([.["ipv4-address"][]?.address]), ipv6:([.["ipv6-address"][]?.address]),
+			dns:(.["dns-server"]//[]),
+			gateway:([.route[]? | select(.target=="0.0.0.0")|.nexthop][0]//null)}' \
+			2>/dev/null || linkup_err "status failed"
+		;;
+	wan_set)
+		read -r input
+		proto=$(printf '%s' "$input" | jq -r '.proto // empty')
+		[ -n "$proto" ] || { linkup_err "proto required"; exit 0; }
+		case "$proto" in *[!a-z0-9]*) linkup_err "bad proto"; exit 0 ;; esac
+		# wipe existing options, then apply chosen proto + provided options (clean proto switch)
+		for k in $(uci show network.wan 2>/dev/null | sed -n 's/^network\.wan\.\([a-z0-9_]*\)=.*/\1/p'); do
+			uci -q delete "network.wan.$k"
+		done
+		uci set "network.wan=interface"
+		uci set "network.wan.proto=$proto"
+		printf '%s' "$input" | jq -r '.options // {} | to_entries[] | "\(.key)\t\(.value)"' 2>/dev/null | while IFS="$TAB" read -r k v; do
+			case "$k" in ''|proto|*[!a-z0-9_]*) continue ;; esac
+			[ "$v" = "null" ] && v=""
+			case "$k" in
+				dns|dns_search)
+					uci -q delete "network.wan.$k"
+					for t in $v; do uci add_list "network.wan.$k=$t"; done ;;
+				*)
+					if [ -z "$v" ]; then uci -q delete "network.wan.$k"
+					else uci set "network.wan.$k=$v"; fi ;;
+			esac
+		done
+		uci commit network
+		( ubus call network.interface.wan down; sleep 1; ubus call network.interface.wan up ) >/dev/null 2>&1 &
+		echo '{"ok":true,"note":"WAN reconfiguring"}'
+		;;
+	reconnect)
+		( ubus call network.interface.wan down; sleep 1; ubus call network.interface.wan up ) >/dev/null 2>&1 &
+		echo '{"ok":true,"note":"WAN reconnecting"}'
+		;;
+	apn_suggest)
+		read -r input
+		mcc=$(printf '%s' "$input" | jq -r '.mcc // empty')
+		mnc=$(printf '%s' "$input" | jq -r '.mnc // empty')
+		[ -n "$mcc" ] && [ -n "$mnc" ] || { linkup_err "mcc and mnc required"; exit 0; }
+		[ -f "$APN_DB" ] || { jq -n '{ok:true, suggestions:[]}'; exit 0; }
+		jq -c --arg k "${mcc}${mnc}" '{ok:true, suggestions: ( (.[$k] // .[($k)] // []) ) }' "$APN_DB" 2>/dev/null \
+			|| jq -n '{ok:true, suggestions:[]}'
+		;;
+	ping)
+		read -r input
+		host=$(printf '%s' "$input" | jq -r '.host // "1.1.1.1"')
+		count=$(printf '%s' "$input" | jq -r '.count // 3')
+		case "$host" in *[!a-zA-Z0-9.:_-]*|"") linkup_err "bad host"; exit 0 ;; esac
+		case "$count" in *[!0-9]*|"") count=3 ;; esac
+		[ "$count" -gt 10 ] && count=10
+		out=$(ping -c "$count" -W 1 "$host" 2>/dev/null)
+		rtt=$(printf '%s' "$out" | sed -n 's#.*= [0-9.]*/\([0-9.]*\)/.*#\1#p')
+		loss=$(printf '%s' "$out" | sed -n 's/.*received, \([0-9]*\)% packet loss.*/\1/p')
+		jq -n --arg r "$rtt" --arg l "${loss:-100}" \
+			'{ok:true, rtt:(($r|select(.!="")|tonumber?)//null), loss:(($l|tonumber?)//null), host:"'"$host"'"}'
+		;;
+	host_traffic)
+		# monotonic per-host byte counters via a dedicated nft forward chain
+		LAN=$(uci -q get network.lan.ipaddr); NET="${LAN%.*}."
+		[ "$NET" = "." ] && NET="192.168.7."
+		T="inet linkup_mon"
+		if ! nft list chain $T acct >/dev/null 2>&1; then
+			nft add table $T 2>/dev/null
+			nft add chain $T acct '{ type filter hook forward priority -200; policy accept; }' 2>/dev/null
+		fi
+		have=$(nft -j list chain $T acct 2>/dev/null | jq -r '.nftables[].rule?.comment // empty' | sed -n 's/^lku-//p')
+		for ip in $(ip -4 neigh show 2>/dev/null | awk '{print $1}' | grep "^$NET" | sort -u); do
+			echo "$have" | grep -qx "$ip" && continue
+			nft add rule $T acct ip saddr "$ip" counter comment "lku-$ip" 2>/dev/null
+			nft add rule $T acct ip daddr "$ip" counter comment "lkd-$ip" 2>/dev/null
+		done
+		# current per-host totals -> "ip rx tx" (rx=download/daddr, tx=upload/saddr)
+		CUR="/tmp/linkup_traffic.$$.cur"; NEWP="/tmp/linkup_traffic.$$.new"; PREV="/tmp/linkup_traffic.prev"
+		NOW=$(cut -d' ' -f1 /proc/uptime 2>/dev/null)
+		nft -j list chain $T acct 2>/dev/null | jq -r '
+			[ .nftables[] | .rule? | select(.!=null and .comment)
+			  | { c:.comment, b:([.expr[]?|.counter?.bytes]|map(select(.!=null))[0]//0) } ]
+			| reduce .[] as $x ({};
+				($x.c[0:4]) as $d | ($x.c[4:]) as $ip
+				| .[$ip] = ((.[$ip] // {rx:0,tx:0})
+					| if $d=="lkd-" then .rx=$x.b else .tx=$x.b end))
+			| to_entries[] | "\(.key) \(.value.rx) \(.value.tx)"' > "$CUR" 2>/dev/null
+		touch "$PREV"
+		# rate = delta bytes / monotonic dt since previous sample (server-side, immune to client latency jitter)
+		awk -v now="$NOW" -v newp="$NEWP" -v prevf="$PREV" '
+			FILENAME==prevf { pr[$1]=$2; pt[$1]=$3; ptm[$1]=$4; next }
+			{
+				ip=$1; rx=$2+0; tx=$3+0
+				dt = (ip in ptm) ? now - ptm[ip] : 0
+				rrx = (dt>0.05 && (ip in pr)) ? (rx-pr[ip])/dt : 0; if (rrx<0) rrx=0
+				rtx = (dt>0.05 && (ip in pt)) ? (tx-pt[ip])/dt : 0; if (rtx<0) rtx=0
+				printf "{\"ip\":\"%s\",\"rx\":%.0f,\"tx\":%.0f,\"rx_rate\":%.0f,\"tx_rate\":%.0f}\n", ip, rx, tx, rrx, rtx
+				print ip, rx, tx, now > newp
+			}' "$PREV" "$CUR" | jq -s -c '{ok:true, hosts:.}'
+		mv "$NEWP" "$PREV" 2>/dev/null
+		rm -f "$CUR"
+		;;
+	lan_links)
+		# map each wired LAN client MAC -> bridge port -> link speed (Mbps)
+		bridge fdb show 2>/dev/null | awk '$0 ~ /master br-lan/ && $0 !~ /self/ && $0 !~ /permanent/ {print $1" "$3}' | sort -u | while read -r mac port; do
+			case "$port" in ra*|apcli*|wlan*|'') continue ;; esac
+			sp=$(cat "/sys/class/net/$port/speed" 2>/dev/null)
+			case "$sp" in ''|*[!0-9-]*) sp=0 ;; esac
+			[ "$sp" = "-1" ] && sp=0
+			printf '{"mac":"%s","port":"%s","speed":%s}\n' "$mac" "$port" "$sp"
+		done | jq -s -c '{ok:true, links:.}'
+		;;
+	*)
+		linkup_err "unknown method"
+		;;
+	esac
+	;;
+esac
