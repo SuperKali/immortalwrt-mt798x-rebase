@@ -359,7 +359,7 @@ wavlink,wl-wn586x3b)
 wirelesstag,zx7981pd-ubootmod)
 	ucidef_set_led_default "power" "POWER" "wt:power:blue" "1"
 	ucidef_set_led_netdev "wlan2g" "WLAN2G" "wt:wifi:blue" "ra0" "link tx rx"
-	ucidef_set_led_netdev "wlan5g" "WLAN5G" "wt:5g:blue" "rai0" "link tx rx"
+	ucidef_set_led_netdev "wlan5g" "WLAN5G" "wt:wifi:blue" "rax0" "link tx rx"
 	;;
 xiaomi,mi-router-wr30u-stock|\
 xiaomi,mi-router-wr30u-mtkuboot|\
