@@ -6,7 +6,7 @@ This repository is worked on ImmortalWrt with MTK OpenWrt Feeds patches imported
 
 ## Commit Cutoff Revisions
 
-### ImmortalWrt: [cd0a06b](https://github.com/immortalwrt/immortalwrt/commit/cd0a06bfd3fdbc1011e32d35348d2ee013b4daf2)
+### ImmortalWrt: [b4efc93](https://github.com/immortalwrt/immortalwrt/commit/b4efc93f5b40529881058b709869c04c393be95f)
 
 ```
 Merge Official Source
@@ -14,20 +14,20 @@ Merge Official Source
 Signed-off-by: Tianling Shen <cnsztl@immortalwrt.org>
 ```
 
-### MTK OpenWrt Feeds: [a89f844](https://git01.mediatek.com/plugins/gitiles/openwrt/feeds/mtk-openwrt-feeds/+/a89f844fc3c2d0bc07ca0a2cbdb4f67a1adc6179)
+### MTK OpenWrt Feeds: [64e3431](https://git01.mediatek.com/plugins/gitiles/openwrt/feeds/mtk-openwrt-feeds/+/64e34317a7a999400445eb244678d99d18914fda)
 
 ```
-[][openwrt-25.12][mt7988][npu][Add package]
+[][kernel-6.12][common][eth][Update Airoha AN8811HB 2.5G PHY driver to v1.0.3]
 
 [Description]
-Add MediaTek NPU package to support tunnel hardware offload and some other
-network offload features.
+*** Too long for revision, see link above ***
 
-[Info to Customer]
+[Release-log]
 N/A
 
-Change-Id: Id9b74e38a284dab938e5d64a45b2885ac627690a
-Reviewed-on: https://gerrit.mediatek.inc/c/openwrt/feeds/mtk_openwrt_feeds/+/12185781
+
+Change-Id: I5d85702e3fc347b5ce6f93efdcbf2bd9847ef188
+Reviewed-on: https://gerrit.mediatek.inc/c/openwrt/feeds/mtk_openwrt_feeds/+/12385519
 ```
 
 ### l1parser: [081bb31](https://github.com/chasey-dev/l1parser/commit/081bb31211efc74594d25bfd1bb5811f3408a205)

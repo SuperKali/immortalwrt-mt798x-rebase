@@ -1,6 +1,6 @@
 --- a/drivers/net/ethernet/mediatek/mtk_hnat/hnat_debugfs.c
 +++ b/drivers/net/ethernet/mediatek/mtk_hnat/hnat_debugfs.c
-@@ -893,10 +893,18 @@ static int binding_threshold(int thresho
+@@ -893,11 +893,19 @@ static int binding_threshold(int thresho
  {
  	int i;
  
@@ -10,7 +10,8 @@
 +		return 0;
 +	}
 +
- 	pr_info("Binding Threshold =%d\n", threshold);
+ 	pr_info("Binding Threshold = %d\n", threshold);
+ 	hnat_priv->bind_threshold = threshold;
  
 +	/* only set lower bit here, since writel may cause unexpected behavior */
  	for (i = 0; i < CFG_PPE_NUM; i++)

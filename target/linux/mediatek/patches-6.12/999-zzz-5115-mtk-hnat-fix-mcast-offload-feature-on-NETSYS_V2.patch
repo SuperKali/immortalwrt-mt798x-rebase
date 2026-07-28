@@ -1,6 +1,6 @@
 --- a/drivers/net/ethernet/mediatek/mtk_hnat/hnat_mcast.c
 +++ b/drivers/net/ethernet/mediatek/mtk_hnat/hnat_mcast.c
-@@ -125,15 +125,19 @@ static struct ppe_mcast_group *hnat_mcas
+@@ -138,15 +138,19 @@ static struct ppe_mcast_group *hnat_mcas
  static void hnat_mcast_foe_mc_enable(struct foe_entry *entry, bool *clr_cache, bool to_npu)
  {
  	if (IS_IPV4_GRP(entry)) {
@@ -20,7 +20,7 @@
  		entry->ipv6_5t_route.iblk2.mcast = 1;
  		entry->ipv6_5t_route.iblk2.dp = 0;
  	}
-@@ -179,19 +183,23 @@ static void hnat_mcast_foe_mc_disable(st
+@@ -192,19 +196,23 @@ static void hnat_mcast_foe_mc_disable(st
  	if (IS_IPV4_GRP(foe)) {
  		foe->ipv4_hnapt.iblk2.dp = dp;
  		foe->ipv4_hnapt.iblk2.mcast = 0;
@@ -44,7 +44,7 @@
  	}
  
  	foe->bfib1.vpm = 0;
-@@ -1329,11 +1337,14 @@ int hnat_mcast_offload_handle(bool enabl
+@@ -1373,11 +1381,14 @@ int hnat_mcast_offload_handle(bool enabl
  	struct ppe_mcast_table *pmcast = hnat_priv->pmcast;
  	struct ppe_mcast_group *group, *tmp;
  
@@ -60,7 +60,7 @@
  	write_lock_bh(&pmcast->mcast_lock);
  	list_for_each_entry_safe(group, tmp, &pmcast->groups, list) {
  		hnat_mcast_group_handle(group, enable);
-@@ -1346,6 +1357,9 @@ int hnat_mcast_enable(u32 ppe_id)
+@@ -1390,6 +1401,9 @@ int hnat_mcast_enable(u32 ppe_id)
  {
  	struct ppe_mcast_table *pmcast;
  

@@ -235,6 +235,8 @@
 /* corresponding values : TABLE_32K, TABLE_16K, TABLE_8K, TABLE_4K, TABLE_2K,
  * TABLE_1K
  */
+/* default binding threshold: 30 packets per second */
+#define DEF_BIND_THRESHOLD	30
 #define MAX_EXT_DEVS		(0x3fU)
 #define MAX_IF_NUM		64
 
@@ -249,6 +251,7 @@
 #define PPE_ENTRY_SIZE		(80)
 #endif
 #define CFG_PPE_NUM		(hnat_priv->ppe_num)
+#define CFG_PPE_BIND_THRESHOLD	(hnat_priv->bind_threshold)
 
 #if defined(CONFIG_MEDIATEK_NETSYS_V2) || defined(CONFIG_MEDIATEK_NETSYS_V3)
 #define MAX_PPE_CACHE_NUM	(128)
@@ -1072,6 +1075,7 @@ struct mtk_hnat {
 
 	u32 foe_etry_num;
 	u32 etry_num_cfg;
+	u16 bind_threshold;
 	struct net_device *g_ppdev;
 	struct net_device *g_wandev;
 	struct net_device *wifi_hook_if[MAX_IF_NUM];
@@ -1561,7 +1565,6 @@ void hnat_flow_entry_delete(struct hnat_flow_entry *flow_entry);
 struct hnat_accounting *hnat_get_count(struct mtk_hnat *h, u32 ppe_id,
 				       u32 index, struct hnat_accounting *diff);
 
-int mtk_hnat_skb_headroom_copy(struct sk_buff *new, struct sk_buff *old);
 int hnat_mcast_foe_bind_handle(const u8 *dmac,
 			       u32 ppe_id, u32 foe_idx, struct foe_entry *entry, int ifindex);
 bool hnat_mcast_chk_blist(struct foe_entry *entry);

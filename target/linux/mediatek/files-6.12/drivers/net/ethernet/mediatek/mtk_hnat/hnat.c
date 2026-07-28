@@ -1148,8 +1148,9 @@ static int hnat_hw_init(u32 ppe_id)
 	cr_set_field(hnat_priv->ppe_base[ppe_id] + PPE_BIND_LMT_0, QURT_LMT, 16383);
 	cr_set_field(hnat_priv->ppe_base[ppe_id] + PPE_BIND_LMT_0, HALF_LMT, 16383);
 	cr_set_field(hnat_priv->ppe_base[ppe_id] + PPE_BIND_LMT_1, FULL_LMT, 16383);
-	/* setup binding threshold as 30 packets per second */
-	cr_set_field(hnat_priv->ppe_base[ppe_id] + PPE_BNDR, BIND_RATE, 0x1E);
+	/* setup binding threshold (default 30 packets per second) */
+	cr_set_field(hnat_priv->ppe_base[ppe_id] + PPE_BNDR, BIND_RATE,
+		     hnat_priv->bind_threshold);
 
 	/* setup FOE cf gen */
 	cr_set_field(hnat_priv->ppe_base[ppe_id] + PPE_GLO_CFG, PPE_EN, 1);
@@ -1433,9 +1434,6 @@ int hnat_enable_hook(void)
 	ppe_del_entry_by_bssid_wcid = entry_delete_by_bssid_wcid;
 	hook_toggle = 1;
 
-	/* register hook function used at linux gso segmentation */
-	mtk_skb_headroom_copy = mtk_hnat_skb_headroom_copy;
-
 	return 0;
 }
 
@@ -1473,9 +1471,6 @@ int hnat_disable_hook(void)
 	ppe_del_entry_by_ip = NULL;
 	ppe_del_entry_by_bssid_wcid = NULL;
 	hook_toggle = 0;
-
-	/* unregister hook function used at linux gso segmentation */
-	mtk_skb_headroom_copy = NULL;
 
 	return 0;
 }
@@ -1553,6 +1548,7 @@ static int hnat_probe(struct platform_device *pdev)
 	}
 
 	hnat_priv->foe_etry_num = DEF_ETRY_NUM;
+	hnat_priv->bind_threshold = DEF_BIND_THRESHOLD;
 
 	match = of_match_device(of_hnat_match, &pdev->dev);
 	if (unlikely(!match)) {
