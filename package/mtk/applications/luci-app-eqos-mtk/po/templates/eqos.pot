@@ -25,6 +25,9 @@ msgstr ""
 msgid "A profile sets the rates for every device that uses it, replacing what the device rule says. Share it and all members sit on one queue, splitting the bandwidth between them. Leave it unshared and each member gets the full rates."
 msgstr ""
 
+msgid "A rule written on a MAC address needs the host to show up at least once before the service can turn it into something nftables can match. These rules are waiting for that, and they carry no traffic until it happens."
+msgstr ""
+
 msgid "AF41, interactive video"
 msgstr ""
 
@@ -89,6 +92,9 @@ msgid "Device rules"
 msgstr ""
 
 msgid "Devices"
+msgstr ""
+
+msgid "Devices the router has not seen"
 msgstr ""
 
 msgid "Disabled"
@@ -484,6 +490,9 @@ msgstr ""
 msgid "from priority"
 msgstr ""
 
+msgid "from the network"
+msgstr ""
+
 msgid "hardware queues"
 msgstr ""
 
@@ -518,6 +527,9 @@ msgid "no limit of its own, and served before everything else"
 msgstr ""
 
 msgid "none"
+msgstr ""
+
+msgid "not on the network"
 msgstr ""
 
 msgid "not placed"

@@ -254,7 +254,7 @@ return view.extend({
 			   catches, and what it matches on goes underneath. */
 			var name = (r.kind === 'traffic')
 				? (uci.get('eqos', r.section, 'name') || r.section)
-				: common.describe(hostNames, r.address);
+				: common.describeRule(hostNames, r.section, r.address);
 
 			/* The map file carries the match as the service wrote it, protocol
 			   names and all. Rebuilt from the configuration it reads the same

@@ -32,6 +32,9 @@ msgstr "硬件队列只能限制从有线端口发出的流量，因此在带有
 msgid "A profile sets the rates for every device that uses it, replacing what the device rule says. Share it and all members sit on one queue, splitting the bandwidth between them. Leave it unshared and each member gets the full rates."
 msgstr "配置文件为所有使用它的设备设定速率，覆盖设备规则中的取值。开启共享后全部成员共用一个队列，彼此分摊带宽；不共享时每个成员各自获得完整速率。"
 
+msgid "A rule written on a MAC address needs the host to show up at least once before the service can turn it into something nftables can match. These rules are waiting for that, and they carry no traffic until it happens."
+msgstr "按 MAC 地址编写的规则需要该主机至少出现过一次，服务才能把它转换成 nftables 可以匹配的内容。这些规则正在等待，在此之前不承载任何流量。"
+
 msgid "AF41, interactive video"
 msgstr "AF41，交互式视频"
 
@@ -97,6 +100,9 @@ msgstr "设备规则"
 
 msgid "Devices"
 msgstr "设备"
+
+msgid "Devices the router has not seen"
+msgstr "路由器尚未见过的设备"
 
 msgid "Disabled"
 msgstr "已停用"
@@ -491,6 +497,9 @@ msgstr "fq_codel"
 msgid "from priority"
 msgstr "按优先级"
 
+msgid "from the network"
+msgstr "来自网络"
+
 msgid "hardware queues"
 msgstr "硬件队列"
 
@@ -526,6 +535,9 @@ msgstr "自身不设限制，并优先于其他所有流量"
 
 msgid "none"
 msgstr "无"
+
+msgid "not on the network"
+msgstr "不在网络中"
 
 msgid "not placed"
 msgstr "未分配队列"

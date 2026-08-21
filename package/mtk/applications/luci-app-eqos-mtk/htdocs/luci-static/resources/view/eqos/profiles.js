@@ -118,7 +118,7 @@ return view.extend({
 
 			if (members.length === 1)
 				return E('div', { 'class': 'eqos-members' },
-					common.describe(hostNames,
+					common.describeRule(hostNames, members[0]['.name'],
 						common.memberAddress(members[0])));
 
 			return E('div', { 'class': 'eqos-members' },

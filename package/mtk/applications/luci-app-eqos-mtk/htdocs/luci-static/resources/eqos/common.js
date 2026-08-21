@@ -597,11 +597,26 @@ return baseclass.extend({
 		return map;
 	},
 
-	describe: function(hostNames, address) {
+	/* What the host is called. The rule keeps a name of its own, because the
+	   neighbour table forgets a device as soon as it goes away and a rule
+	   would be left showing a bare MAC. */
+	hostName: function(hostNames, address) {
+		if (!address)
+			return null;
+
+		return hostNames[address] || hostNames[address.toLowerCase()] || null;
+	},
+
+	deviceLabel: function(hostNames, section_id, address) {
+		return uci.get('eqos', section_id, 'name') ||
+			this.hostName(hostNames, address) || null;
+	},
+
+	describeRule: function(hostNames, section_id, address) {
 		if (!address)
 			return _('unspecified');
 
-		var name = hostNames[address] || hostNames[address.toLowerCase()];
+		var name = this.deviceLabel(hostNames, section_id, address);
 
 		return name ? '%s (%s)'.format(name, address) : address;
 	},
@@ -700,6 +715,10 @@ return baseclass.extend({
 		return {
 			prime: function() {
 				return L.resolveDefault(callRuleStats(), {}).then(track);
+			},
+
+			status: function() {
+				return L.resolveDefault(callStatus(), {});
 			},
 
 			poll: function(cb) {
