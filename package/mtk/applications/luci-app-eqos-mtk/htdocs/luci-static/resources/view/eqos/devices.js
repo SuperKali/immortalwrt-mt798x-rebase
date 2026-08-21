@@ -21,7 +21,87 @@ return view.extend({
 		]);
 	},
 
+	/* Which rules the service placed, as one string, so two polls apart can be
+	   compared without walking anything. */
+	placement: function(rules) {
+		return rules.filter(function(r) { return r.kind !== 'traffic'; })
+			.map(function(r) { return r.section; })
+			.sort()
+			.join(',');
+	},
+
+	/* The tables are built from that placement, so a device that appears or
+	   goes away has to rebuild them. Not while somebody is typing: a form
+	   replaced under an open editor loses what was in it. */
+	restack: function(rules) {
+		var key = this.placement(rules);
+
+		if (key === this.stacked)
+			return;
+
+		/* The editor lives outside the part being replaced, so it survives the
+		   swap and then writes against a form that no longer exists. */
+		if (document.body.classList.contains('modal-overlay-active'))
+			return;
+
+		if (L.ui.changes && L.ui.changes.numChanges > 0)
+			return;
+
+		this.stacked = key;
+		this.data[3] = { rules: rules };
+
+		var self = this;
+
+		return this.build(this.data).then(function(node) {
+			self.holder.parentNode.replaceChild(node, self.holder);
+			self.holder = node;
+		});
+	},
+
 	render: function(data) {
+		var self = this;
+
+		this.data = data;
+		this.stacked = this.placement((data[3] || {}).rules || []);
+
+		poll.add(live.poll(function(rules, rates) {
+			var seen = {};
+
+			rules.forEach(function(r) {
+				var node = document.getElementById('eqos-live-' + r.section);
+
+				seen[r.section] = true;
+
+				/* Past the first poll, a device with no counters is not
+				   pending: it is simply idle. */
+				if (node)
+					L.dom.content(node, common.liveCell(
+						rates.addresses[r.address] || { down: 0, up: 0 }));
+			});
+
+			/* A rule the service never placed carries nothing, and a
+			   placeholder that keeps pulsing reads as a figure still on its
+			   way. The table it belongs to has no traffic column at all, so
+			   this only catches the moment before the rebuild. */
+			uci.sections('eqos', 'device').forEach(function(d) {
+				var node = document.getElementById('eqos-live-' + d['.name']);
+
+				if (node && !seen[d['.name']])
+					L.dom.content(node,
+						E('em', { 'class': 'eqos-muted' }, _('not on the network')));
+			});
+
+			return self.restack(rules);
+		}));
+
+		return this.build(data).then(function(node) {
+			self.holder = node;
+
+			return E([], [ common.style(), node ]);
+		});
+	},
+
+	build: function(data) {
 		var hosts = data[1] ? data[1].hosts || {} : {};
 		var hostChoices = common.collectHostChoices(hosts);
 		var hostNames = common.hostNameMap(hosts);
@@ -35,7 +115,7 @@ return view.extend({
 		   place has no queue and no traffic to show, and leaving it among the
 		   working ones only raises the question of why its figures never
 		   arrive. */
-		function addSection(title, description, filter, addbutton) {
+		function addSection(title, description, filter, addbutton, traffic) {
 			var s, o;
 
 			/* Deliberately not sortable: the order of the sections carries no
@@ -43,7 +123,12 @@ return view.extend({
 			   rows without changing anything is worse than no control at all. */
 			s = m.section(form.GridSection, 'device', title, description);
 			s.addremove = true;
-			s.filter = filter;
+
+			/* Only when there is one: the base class binds this property
+			   without checking it, so a null here is worse than no property
+			   at all. */
+			if (filter)
+				s.filter = filter;
 			s.anonymous = true;
 			s.nodescriptions = true;
 
@@ -170,11 +255,16 @@ return view.extend({
 				]);
 			};
 
-			o = s.option(form.DummyValue, '_traffic', _('Traffic'));
-			o.textvalue = function(section_id) {
-				return E('div', { 'id': 'eqos-live-' + section_id },
-					common.liveCell(null));
-			};
+			/* No traffic column on a rule the service never placed: an empty
+			   column asks what happened to the figures, and a zero claims a
+			   reading that was never taken. */
+			if (traffic) {
+				o = s.option(form.DummyValue, '_traffic', _('Traffic'));
+				o.textvalue = function(section_id) {
+					return E('div', { 'id': 'eqos-live-' + section_id },
+						common.liveCell(null));
+				};
+			}
 
 			o = s.taboption('general', form.ListValue, 'profile', _('Profile'),
 				_('Use the rates and the priority of a profile instead of setting them here.'));
@@ -283,58 +373,33 @@ return view.extend({
 			return s;
 		}
 
+		var rules = (data[3] || {}).rules || [];
 		var placed = {};
-		((data[3] || {}).rules || []).forEach(function(r) {
+
+		rules.forEach(function(r) {
 			if (r.kind !== 'traffic')
 				placed[r.section] = true;
 		});
 
+		/* With the service down the status call comes back empty, and every
+		   rule would look unplaced. One table then, which is the truth: what
+		   is unknown is the state of the service, not of the rules. */
+		var split = rules.some(function(r) { return r.kind !== 'traffic'; }) &&
+			uci.sections('eqos', 'device').some(function(d) {
+				return placed[d['.name']] === undefined;
+			});
+
 		addSection(_('Device rules'), null,
-			function(section_id) { return placed[section_id] !== undefined; },
-			true);
+			split ? function(section_id) { return placed[section_id] !== undefined; }
+				: null,
+			true, true);
 
-		/* Only worth a table of its own when there is something in it. */
-		var missing = uci.sections('eqos', 'device').filter(function(d) {
-			return placed[d['.name']] === undefined;
-		});
-
-		if (missing.length)
+		if (split)
 			addSection(_('Devices the router has not seen'),
 				_('A rule written on a MAC address needs the host to show up at least once before the service can turn it into something nftables can match. These rules are waiting for that, and they carry no traffic until it happens.'),
 				function(section_id) { return placed[section_id] === undefined; },
-				false);
+				false, false);
 
-		/* Only the cells are replaced, never the form around them: a poll that
-		   re-rendered the section would throw away whatever is being edited. */
-		poll.add(live.poll(function(rules, rates) {
-			var seen = {};
-
-			rules.forEach(function(r) {
-				var node = document.getElementById('eqos-live-' + r.section);
-
-				seen[r.section] = true;
-
-				/* Past the first poll, a device with no counters is not
-				   pending: it is simply idle. */
-				if (node)
-					L.dom.content(node, common.liveCell(
-						rates.addresses[r.address] || { down: 0, up: 0 }));
-			});
-
-			/* A rule the service never placed carries nothing, and a
-			   placeholder that keeps pulsing reads as a figure still on its
-			   way. */
-			uci.sections('eqos', 'device').forEach(function(d) {
-				var node = document.getElementById('eqos-live-' + d['.name']);
-
-				if (node && !seen[d['.name']])
-					L.dom.content(node,
-						E('em', { 'class': 'eqos-muted' }, _('not on the network')));
-			});
-		}));
-
-		return m.render().then(function(formNode) {
-			return E([], [ common.style(), formNode ]);
-		});
+		return m.render();
 	}
 });
