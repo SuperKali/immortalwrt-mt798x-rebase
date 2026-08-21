@@ -1,0 +1,620 @@
+/**
+ * luci.eqos - status backend for the EQoS front end.
+ *
+ * Reports what the hardware is actually doing, which is not always what the
+ * configuration asks for: uplink HQoS never engages on an external WAN device,
+ * traffic bound for Wi-Fi never reaches the QDMA scheduler at all, and a rule
+ * that ran out of hardware queues silently fell back to software shaping.
+ *
+ * The per-queue MIB registers behind qdma_txq%d are read-and-clear, so the
+ * value a read returns is already the delta since the previous read. The byte
+ * counter there does not agree with the netdev counters by any fixed factor, so
+ * it is reported raw and never turned into a bitrate; real upload figures come
+ * from the tc classes on the WAN device instead.
+ **/
+
+'use strict';
+
+import { readfile, writefile, popen, lsdir } from 'fs';
+
+const HNAT_DIR = '/sys/kernel/debug/hnat';
+const WAN_STATE = '/var/run/eqos.wan';
+const WARN_FILE = '/var/run/eqos.warn';
+const MAP_FILE = '/var/run/eqos.map';
+const SAMPLE_STATE = '/var/run/eqos-sample';
+const ZERO_ADDR = '0.0.0.0';
+const IFB_DEV = 'ifb-eqos';
+const LAN_STATE = '/var/run/eqos.lan';
+const TC_LOCAL_CLASSID = 0xffff;
+/* The software class that holds what no rule matched. It is the same thing the
+ * hardware catch-all queue holds, so the two are counted together: two figures
+ * for one idea would only invite the question of which is the real one. */
+const TC_DEFAULT_CLASSID = 0xfffd;
+const WAN_DEFAULT_CLASSID = 0xfffe;
+const GLOBAL_UP_QID = 31;
+/* Not a queue: the tag that keeps a flow off the accelerator. */
+const HNAT_EXCEPTION_MARK = 0x99;
+const GLOBAL_DL_QID = 62;
+const DL_QID_OFFSET = 31;
+const UP_SCH = 2;
+const DL_SCH = 3;
+const SAMPLE_MAX_AGE = 30000;
+
+const slurp = (path) => {
+	let c = readfile(path);
+	return c ? trim(c) : null;
+};
+
+/* rpcd does not keep module state between invocations, so the previous sample
+ * has to survive on its own. Only the timestamp matters for the queue MIB,
+ * whose registers are read-and-clear: the value a read returns is already the
+ * delta. The tc counters are cumulative and need their previous values too.
+ *
+ * Each method keeps its own file. The front end asks for several of them at
+ * once, and a shared file turns that into a read-modify-write race: an
+ * interleaving that stores one method's fresh timestamp next to another's
+ * stale byte counts yields a rate far above what the link can carry. */
+const load_sample = (key) => {
+	let raw = readfile(SAMPLE_STATE + '-' + key + '.json');
+	if (!raw)
+		return {};
+
+	try {
+		return json(raw) || {};
+	} catch (e) {
+		return {};
+	}
+};
+
+const save_sample = (key, state) => {
+	try {
+		writefile(SAMPLE_STATE + '-' + key + '.json', sprintf('%J', state));
+	} catch (e) {
+		/* a read-only /var/run just means no rates, not an error */
+	}
+};
+
+const first_line = (path) => {
+	let c = slurp(path);
+	return c ? trim(split(c, '\n')[0]) : null;
+};
+
+const now_ms = () => {
+	let c = clock();
+	return c[0] * 1000 + int(c[1] / 1000000);
+};
+
+/* "EN  Scheduling  MAX  Queue#" then "1  WRR  1000000  31  62" */
+const parse_sched = (id) => {
+	let t = slurp(HNAT_DIR + '/qdma_sch' + id);
+	if (!t)
+		return null;
+
+	let lines = split(t, '\n');
+	if (length(lines) < 2)
+		return null;
+
+	let m = match(lines[1], /^[ \t]*([0-9]+)[ \t]+([^ \t]+)[ \t]+([0-9]+)[ \t]*(.*)$/);
+	if (!m)
+		return null;
+
+	let queues = [];
+	for (let q in split(trim(m[4]), /[ \t]+/))
+		if (length(q))
+			push(queues, int(q));
+
+	return {
+		enabled: int(m[1]) ? true : false,
+		mode: lc(m[2]),
+		rate: int(m[3]),
+		queues: queues
+	};
+};
+
+const parse_queue = (id) => {
+	let t = slurp(HNAT_DIR + '/qdma_txq' + id);
+	if (!t)
+		return null;
+
+	let sched = match(t, /scheduler:[ \t]*([0-9]+)/);
+	let pkts = match(t, /packet count:[ \t]*([0-9]+)/);
+	let bytes = match(t, /bytes count:[ \t]*([0-9]+)/);
+	let drop = match(t, /packet drop:[ \t]*([0-9]+)/);
+	let mx = match(t, /max[ \t]+([0-9]+)[ \t]+([0-9]+)[ \t]+([0-9]+)/);
+	let mn = match(t, /min[ \t]+([0-9]+)[ \t]+([0-9]+)/);
+
+	return {
+		id: id,
+		scheduler: sched ? int(sched[1]) : null,
+		max_enabled: mx ? (int(mx[1]) ? true : false) : false,
+		max_rate: mx ? int(mx[2]) : 0,
+		weight: mx ? int(mx[3]) : 0,
+		min_enabled: mn ? (int(mn[1]) ? true : false) : false,
+		min_rate: mn ? int(mn[2]) : 0,
+		packets: pkts ? int(pkts[1]) : 0,
+		bytes: bytes ? int(bytes[1]) : 0,
+		drops: drop ? int(drop[1]) : 0
+	};
+};
+
+/* slot<TAB>section<TAB>address<TAB>profile<TAB>priority<TAB>dl<TAB>up<TAB>min_dl<TAB>min_up */
+/* What the service let through but was not happy about. A warning that only
+ * reaches the system log is a warning nobody reads. */
+const parse_warnings = () => {
+	let raw = readfile(WARN_FILE);
+	if (!raw)
+		return [];
+
+	let out = [];
+	for (let line in split(trim(raw), '\n'))
+		if (length(trim(line)))
+			push(out, trim(line));
+
+	return out;
+};
+
+const parse_map = () => {
+	let raw = readfile(MAP_FILE);
+	if (!raw)
+		return [];
+
+	let out = [];
+	for (let line in split(trim(raw), '\n')) {
+		let f = split(line, '\t');
+		if (length(f) < 9)
+			continue;
+
+		push(out, {
+			slot: int(f[0]),
+			section: f[1],
+			address: f[2],
+			profile: (f[3] == '-') ? null : f[3],
+			priority: f[4],
+			download: int(f[5]),
+			upload: int(f[6]),
+			min_download: int(f[7]),
+			min_upload: int(f[8]),
+			/* Older rows have no kind column, and everything the service
+			 * wrote before service rules existed was a device rule. */
+			kind: (length(f) > 9) ? f[9] : 'device'
+		});
+	}
+
+	return out;
+};
+
+/* Traffic bound for a wireless client leaves through the wireless DMA and
+ * never reaches the QDMA scheduler, so the front end warns about it - but only
+ * on a router that actually has radios. */
+const has_wireless = () => {
+	let names = lsdir('/sys/class/net');
+	if (!names)
+		return false;
+
+	for (let n in names)
+		if (match(n, /^(ra[0-9x]|wlan|apcli|wl[0-9])/))
+			return true;
+
+	return false;
+};
+
+/* Accounting a device's traffic takes two sources, because a flow moves between
+ * them. Until the PPE binds it - hnat_setting decides after how many packets -
+ * every packet walks the netfilter path and lands on the counter of the mark
+ * rule. Once bound, the flow leaves netfilter entirely and only the PPE sees
+ * it, which is why the nftables counters flatline under load; from then on the
+ * per-flow accounting in all_entry is what moves. The two are disjoint, so the
+ * figures add up.
+ *
+ * The byte counter behind qdma_txq%d is deliberately not used: it does not
+ * agree with the netdev counters by any fixed factor. */
+const parse_rule_counters = () => {
+	let p = popen('nft -j list table inet eqos 2>/dev/null');
+	if (!p)
+		return {};
+
+	let raw = p.read('all');
+	p.close();
+
+	let doc;
+	try {
+		doc = json(raw || '{}');
+	} catch (e) {
+		return {};
+	}
+
+	let out = { marks: {}, addrs: {} };
+	for (let item in (doc.nftables || [])) {
+		let rule = item.rule;
+		if (!rule || !rule.expr)
+			continue;
+
+		let mark = null, bytes = 0, packets = 0, counted = false;
+		let addr = null, dir = null;
+
+		for (let e in rule.expr) {
+			if (e.counter) {
+				bytes = int(e.counter.bytes || 0);
+				packets = int(e.counter.packets || 0);
+				counted = true;
+			}
+
+			if (e.mangle && e.mangle.key && e.mangle.key.meta &&
+			    e.mangle.key.meta.key == 'mark' && type(e.mangle.value) == 'int')
+				mark = e.mangle.value;
+
+			/* The address the rule selects on, and which side it is: a source
+			 * match is the device sending, a destination match is it
+			 * receiving. This is what tells apart two devices that share a
+			 * queue and therefore share a mark. */
+			let m = e.match;
+			if (m && m.left && m.left.payload && type(m.right) == 'string') {
+				let field = m.left.payload.field;
+
+				if (field == 'saddr' || field == 'daddr') {
+					addr = m.right;
+					dir = (field == 'saddr') ? 'up' : 'down';
+				}
+			}
+		}
+
+		if (!counted)
+			continue;
+
+		if (mark != null) {
+			if (!out.marks[mark])
+				out.marks[mark] = { bytes: 0, packets: 0 };
+
+			out.marks[mark].bytes += bytes;
+			out.marks[mark].packets += packets;
+		}
+
+		if (addr) {
+			if (!out.addrs[addr])
+				out.addrs[addr] = {};
+			if (!out.addrs[addr][dir])
+				out.addrs[addr][dir] = { bytes: 0, packets: 0 };
+
+			out.addrs[addr][dir].bytes += bytes;
+			out.addrs[addr][dir].packets += packets;
+		}
+	}
+
+	return out;
+};
+
+/* bytes=N|packets=N|...|SIP=a(sp=x)->DIP=b(dp=y)=>NSIP=c(sp=z)->NDIP=d(dp=w)
+ *
+ * A flow that was source-NATed is a device uploading, and the device is the
+ * pre-NAT source; a flow that was destination-NATed is a device downloading,
+ * and the device is the post-NAT destination. Anything else is not a LAN
+ * device's traffic and is left out. */
+/* One pass over the four addresses. The line format is fixed, so four
+ * separate searches over the same 370 characters buy nothing. */
+const FLOW_RE = /^bytes=([0-9]+)\|packets=([0-9]+)\|.*\|state=BIND\|.*\|SIP=([0-9a-fA-F.:]+)\([^)]*\)->DIP=([0-9a-fA-F.:]+)\([^)]*\)=>NSIP=([0-9a-fA-F.:]+)\([^)]*\)->NDIP=([0-9a-fA-F.:]+)\(/;
+
+/* The kernel walks the whole PPE table on every read, and every open page asks
+ * for this. Holding the result for a second means one walk per second however
+ * many tabs are watching, and a client polling every few seconds never sees the
+ * same sample twice. */
+let flow_cache = null;
+let flow_cache_time = 0;
+
+const parse_flows = () => {
+	let now = time();
+
+	if (flow_cache && now == flow_cache_time)
+		return flow_cache;
+
+	let raw = readfile(HNAT_DIR + '/all_entry');
+	if (!raw)
+		return { up: {}, down: {} };
+
+	let up = {}, down = {};
+
+	for (let line in split(raw, '\n')) {
+		/* Only a bound entry is carrying traffic past netfilter. An entry in any
+		 * other state is still being counted by the mark rules, so taking it
+		 * here would count it twice, and it leaves the post-NAT fields zeroed,
+		 * which reads as a translation that never happened. */
+		let c = match(line, FLOW_RE);
+		if (!c)
+			continue;
+
+		let bytes = int(c[1]);
+		let packets = int(c[2]);
+		if (!bytes)
+			continue;
+
+		let sip = c[3], dip = c[4], nsip = c[5], ndip = c[6];
+
+		if (nsip != ZERO_ADDR && sip != nsip) {
+			if (!up[sip])
+				up[sip] = { bytes: 0, packets: 0 };
+			up[sip].bytes += bytes;
+			up[sip].packets += packets;
+		}
+		else if (ndip != ZERO_ADDR && dip != ndip) {
+			if (!down[ndip])
+				down[ndip] = { bytes: 0, packets: 0 };
+			down[ndip].bytes += bytes;
+			down[ndip].packets += packets;
+		}
+	}
+
+	flow_cache = { up: up, down: down };
+	flow_cache_time = now;
+
+	return flow_cache;
+};
+
+const hex2dec = (str) => {
+	let digits = '0123456789abcdef';
+	let out = 0;
+
+	for (let ch in split(lc(str), '')) {
+		let v = index(digits, ch);
+		if (v < 0)
+			return -1;
+		out = out * 16 + v;
+	}
+
+	return out;
+};
+
+/* A device shaped in software carries the exception tag instead of its queue
+ * mark, so neither the mark rules nor the PPE can account for it. Its class on
+ * the shaper can: every packet of it passes through. Upload is shaped on the
+ * ingress mirror, download on the bridge itself. */
+const parse_tc_classes = (dev) => {
+	if (!dev)
+		return {};
+
+	let p = popen('tc -s -j class show dev ' + dev + ' 2>/dev/null');
+	if (!p)
+		return {};
+
+	let raw = p.read('all');
+	p.close();
+
+	let arr;
+	try {
+		arr = json(raw || '[]');
+	} catch (e) {
+		return {};
+	}
+
+	let out = {};
+
+	for (let c in (arr || [])) {
+		let handle = c.handle;
+		if (!handle)
+			continue;
+
+		/* The AQM attached to each leaf reports its own flow classes, and their
+		 * handles look exactly like a queue slot once the hex is read as a
+		 * number. Only the htb classes are ours. */
+		if (c.class != 'htb')
+			continue;
+
+		let parts = split(handle, ':');
+		if (length(parts) != 2)
+			continue;
+
+		let slot = hex2dec(parts[1]);
+		if (slot <= 0 || slot == TC_LOCAL_CLASSID ||
+		    slot == WAN_DEFAULT_CLASSID || slot == 1)
+			continue;
+
+		if (slot == TC_DEFAULT_CLASSID)
+			slot = GLOBAL_UP_QID;
+
+		out[slot] = {
+			bytes: int(c.stats ? c.stats.bytes : 0),
+			packets: int(c.stats ? c.stats.packets : 0),
+			drops: int(c.stats ? c.stats.drops : 0)
+		};
+	}
+
+	return out;
+};
+
+/* What actually crossed the uplink, straight from the interface counters.
+ * Adding up the per-queue figures would not do: traffic no rule claims never
+ * passes through a software class, so the sum is an estimate that can drift
+ * past the very total it is being compared against. */
+const link_bytes = (dev) => {
+	if (!dev)
+		return null;
+
+	let rx = readfile('/sys/class/net/' + dev + '/statistics/rx_bytes');
+	let tx = readfile('/sys/class/net/' + dev + '/statistics/tx_bytes');
+	if (!rx || !tx)
+		return null;
+
+	return { down: int(trim(rx)), up: int(trim(tx)) };
+};
+
+const safe_device = (dev) => {
+	if (!dev)
+		return null;
+
+	return match(dev, /^[A-Za-z0-9._-]+$/) ? dev : null;
+};
+
+const methods = {
+	getStatus: {
+		call: function() {
+			let up = parse_sched(UP_SCH);
+			let dl = parse_sched(DL_SCH);
+			let hook = slurp(HNAT_DIR + '/hook_toggle');
+
+			return {
+				hnat: hook != null,
+				hook: hook,
+				wan_if: first_line(HNAT_DIR + '/hnat_wan_if'),
+				lan_if: first_line(HNAT_DIR + '/hnat_lan_if'),
+				ppd_if: first_line(HNAT_DIR + '/hnat_ppd_if'),
+				wan_device: slurp(WAN_STATE),
+				upload: up,
+				download: dl,
+				wireless: has_wireless(),
+				rules: parse_map(),
+				warnings: parse_warnings()
+			};
+		}
+	},
+
+	getQueues: {
+		call: function() {
+			let up = parse_sched(UP_SCH);
+			let dl = parse_sched(DL_SCH);
+			let ids = [];
+
+			for (let q in (up ? up.queues : []))
+				push(ids, q);
+			for (let q in (dl ? dl.queues : []))
+				push(ids, q);
+
+			let t = now_ms();
+			let state = load_sample('queues');
+			let dt = 0;
+			if (state.queue_time && (t - state.queue_time) < SAMPLE_MAX_AGE)
+				dt = (t - state.queue_time) / 1000;
+			state.queue_time = t;
+			save_sample('queues', state);
+
+			let out = {};
+			for (let id in ids) {
+				let q = parse_queue(id);
+				if (!q)
+					continue;
+
+				q.direction = (q.scheduler == UP_SCH) ? 'upload' : 'download';
+				q.pps = (dt > 0) ? int(q.packets / dt) : 0;
+				q.dps = (dt > 0) ? int(q.drops / dt) : 0;
+				out[id] = q;
+			}
+
+			return { queues: out, sampled: dt > 0, interval: dt };
+		}
+	},
+
+	getRuleStats: {
+		call: function() {
+			let marks = parse_rule_counters();
+			let flows = parse_flows();
+			let rules = parse_map();
+			/* Cumulative counters and a timestamp, no rates. Turning these into
+			 * a rate needs the previous sample, and a previous sample kept here
+			 * would be shared by every caller: a second client polling on its
+			 * own schedule moves the reference out from under the first, which
+			 * pairs one caller's byte delta with another's interval and yields
+			 * a rate several times the real one. The caller keeps its own
+			 * previous sample and knows exactly how far apart the two are. */
+			let t = now_ms();
+
+			/* Totals per queue slot: the members of a shared profile all sit on
+			 * one slot and belong together. */
+			let cur = {};
+			const bump = (slot, dir, bytes, packets) => {
+				let key = slot + ':' + dir;
+				if (!cur[key])
+					cur[key] = { bytes: 0, packets: 0 };
+				cur[key].bytes += bytes;
+				cur[key].packets += packets;
+			};
+
+			let claimed = {};
+
+			for (let r in rules) {
+				let up = flows.up[r.address];
+				let down = flows.down[r.address];
+
+				claimed[r.address] = true;
+
+				if (up)
+					bump(r.slot, 'up', up.bytes, up.packets);
+				if (down)
+					bump(r.slot, 'down', down.bytes, down.packets);
+			}
+
+			/* Whatever no rule claimed rides the catch-all queues. */
+			for (let addr in flows.up)
+				if (!claimed[addr])
+					bump(GLOBAL_UP_QID, 'up', flows.up[addr].bytes, flows.up[addr].packets);
+
+			for (let addr in flows.down)
+				if (!claimed[addr])
+					bump(GLOBAL_UP_QID, 'down', flows.down[addr].bytes, flows.down[addr].packets);
+
+			/* Where a shaper owns a queue it has seen every packet of it, so
+			 * it replaces both other sources rather than adding to them. */
+			let soft = {
+				up: parse_tc_classes(IFB_DEV),
+				down: parse_tc_classes(safe_device(slurp(LAN_STATE)))
+			};
+
+			let drops = {};
+
+			/* Added rather than substituted. For a device shaped in software
+			 * the flows contributed nothing anyway, because the exception tag
+			 * keeps it off the accelerator. But the catch-all holds two halves
+			 * that never overlap: the software class sees what stayed on the
+			 * netfilter path, and the bound flows are what the accelerator
+			 * took over. Replacing one with the other threw half of it away. */
+			for (let dir in [ 'up', 'down' ])
+				for (let slot in soft[dir]) {
+					bump(int(slot), dir, soft[dir][slot].bytes,
+						soft[dir][slot].packets);
+					drops[slot + ':' + dir] = soft[dir][slot].drops;
+				}
+
+			/* The pre-bind share of every flow, from the mark rules. */
+			for (let mark in marks.marks) {
+				let m = int(mark);
+
+				/* The exclusion tag is not a queue id. Run through the same
+				 * arithmetic it came out as slot 122, a queue nothing owns,
+				 * and its bytes were filed under it. */
+				if (m == HNAT_EXCEPTION_MARK)
+					continue;
+
+				let slot = (m > DL_QID_OFFSET) ? m - DL_QID_OFFSET : m;
+				let dir = (m > DL_QID_OFFSET) ? 'down' : 'up';
+
+				if (m == GLOBAL_DL_QID)
+					slot = GLOBAL_UP_QID;
+
+				if (soft[dir][slot])
+					continue;
+
+				bump(slot, dir, marks.marks[mark].bytes,
+					marks.marks[mark].packets);
+			}
+
+			let out = {};
+			for (let key in cur)
+				out[key] = {
+					bytes: cur[key].bytes,
+					packets: cur[key].packets,
+					drops: int(drops[key])
+				};
+
+			/* Download arrives on the WAN and upload leaves it, so rx is the
+			 * download figure and tx the upload one. */
+			let link = link_bytes(safe_device(slurp(WAN_STATE)));
+
+			/* Devices sharing a queue share a mark, so the queue totals cannot
+			 * tell them apart; the per-address counters can. */
+			return {
+				slots: out,
+				addresses: marks.addrs,
+				link: link || {},
+				time: t
+			};
+		}
+	}
+};
+
+return { 'luci.eqos': methods };

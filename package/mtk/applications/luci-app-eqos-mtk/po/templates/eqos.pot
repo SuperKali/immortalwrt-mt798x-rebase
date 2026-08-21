@@ -1,19 +1,142 @@
 msgid ""
 msgstr "Content-Type: text/plain; charset=UTF-8"
 
-msgid "Address"
+msgid "%d devices"
+msgstr ""
+
+msgid "%d dropped"
+msgstr ""
+
+msgid "%d in software"
+msgstr ""
+
+msgid "%s down"
+msgstr ""
+
+msgid "%s matches no rule"
+msgstr ""
+
+msgid "%s up"
+msgstr ""
+
+msgid "A hardware queue only limits what leaves through the wired ports, so on a bridge with a radio it misses the Wi-Fi clients. Automatic moves download shaping to software when it finds a radio, which costs the hardware offload for the devices that have a rule."
+msgstr ""
+
+msgid "A profile sets the rates for every device that uses it, replacing what the device rule says. Share it and all members sit on one queue, splitting the bandwidth between them. Leave it unshared and each member gets the full rates."
+msgstr ""
+
+msgid "AF41, interactive video"
+msgstr ""
+
+msgid "Active"
+msgstr ""
+
+msgid "Active from"
+msgstr ""
+
+msgid "Active until"
+msgstr ""
+
+msgid "Add a profile from a preset:"
+msgstr ""
+
+msgid "Add a rule from a preset:"
+msgstr ""
+
+msgid "Add profile"
+msgstr ""
+
+msgid "Add rule"
+msgstr ""
+
+msgid "Advanced"
+msgstr ""
+
+msgid "All members sit on one queue and split the rates below, instead of each getting them in full."
+msgstr ""
+
+msgid "Automatic"
+msgstr ""
+
+msgid "Both directions"
+msgstr ""
+
+msgid "CS1, background"
+msgstr ""
+
+msgid "CS6, network control"
+msgstr ""
+
+msgid "Cameras"
+msgstr ""
+
+msgid "Critical"
+msgstr ""
+
+msgid "DNS"
+msgstr ""
+
+msgid "Days"
+msgstr ""
+
+msgid "Decides both the scheduling weight and which queue the profile gets, so it counts under either scheduling mode."
+msgstr ""
+
+msgid "Device"
 msgstr ""
 
 msgid "Device rules"
 msgstr ""
 
+msgid "Devices"
+msgstr ""
+
+msgid "Disabled"
+msgstr ""
+
+msgid "Display name"
+msgstr ""
+
 msgid "Download"
+msgstr ""
+
+msgid "Download now"
+msgstr ""
+
+msgid "Download only"
+msgstr ""
+
+msgid "Download shaping"
+msgstr ""
+
+msgid "Downloads"
+msgstr ""
+
+msgid "EF, voice"
 msgstr ""
 
 msgid "EQoS"
 msgstr ""
 
+msgid "EQoS is disabled, nothing below is being enforced."
+msgstr ""
+
 msgid "Enable"
+msgstr ""
+
+msgid "File sharing"
+msgstr ""
+
+msgid "Floor for queues with no guarantee"
+msgstr ""
+
+msgid "Friday"
+msgstr ""
+
+msgid "Game consoles"
+msgstr ""
+
+msgid "Gaming"
 msgstr ""
 
 msgid "General Settings"
@@ -22,40 +145,394 @@ msgstr ""
 msgid "Grant UCI access for luci-app-eqos"
 msgstr ""
 
+msgid "Guaranteed download"
+msgstr ""
+
+msgid "Guaranteed upload"
+msgstr ""
+
+msgid "Guests"
+msgstr ""
+
+msgid "HNAT binding threshold"
+msgstr ""
+
+msgid "HQoS direction"
+msgstr ""
+
+msgid "Hardware queues"
+msgstr ""
+
+msgid "High"
+msgstr ""
+
+msgid "How many packets a flow has to carry before the accelerator takes it over. The service writes the same value to the turboacc configuration."
+msgstr ""
+
+msgid "How the four priority levels split the line under weighted round robin. What counts is the distance between them: at 15 against 1, a critical queue gets fifteen times the share of a low one when both want more than there is. Strict priority ignores these."
+msgstr ""
+
 msgid "IPv4 address"
 msgstr ""
 
 msgid "IPv6 address"
 msgstr ""
 
-msgid "Maximum rate in Mbit/s. Use 0 for no limit."
+msgid "IoT"
+msgstr ""
+
+msgid "Keeps this profile on a fixed queue instead of letting the service choose. Use 1 to %d for a hardware queue, or %d and above for software shaping. The numbers in between belong to the queues that carry everything else."
+msgstr ""
+
+msgid "Keeps this rule on a fixed queue instead of letting the service choose. A service rule always needs a hardware queue, so the value has to be %d or below."
+msgstr ""
+
+msgid "Keeps this rule on a fixed queue instead of letting the service choose. Use 1 to %d for a hardware queue, or %d and above for software shaping. The numbers in between belong to the queues that carry everything else."
+msgstr ""
+
+msgid "Leave both times empty and the rule is always on. A window that ends before it starts runs through the night, so 22:00 to 07:00 is one stretch and not two."
+msgstr ""
+
+msgid "Leave it empty and the rule watches the whole network. Fill it in and it only applies to the devices listed, which is how one phone gets its calls sorted without doing the same for everybody."
+msgstr ""
+
+msgid "Leave it empty for every day."
+msgstr ""
+
+msgid "Leave it empty to use the device of the wan interface."
+msgstr ""
+
+msgid "Limits are being enforced and the accelerator is running."
+msgstr ""
+
+msgid "Limits are being enforced in software only, the accelerator is not running."
+msgstr ""
+
+msgid "Limits the line as a whole, and each device on its own. The per-device limits run in software, so they work for Wi-Fi clients as well. Traffic that no rule matches goes to the hardware queues."
+msgstr ""
+
+msgid "Low"
+msgstr ""
+
+msgid "MAC address"
+msgstr ""
+
+msgid "MAC or IP address"
+msgstr ""
+
+msgid "Marking"
+msgstr ""
+
+msgid "Match"
+msgstr ""
+
+msgid "Matches"
+msgstr ""
+
+msgid "Monday"
 msgstr ""
 
 msgid "Network speed control service for MediaTek HNAT."
 msgstr ""
 
+msgid "No acceleration"
+msgstr ""
+
+msgid "No device rule is active."
+msgstr ""
+
+msgid "No limits"
+msgstr ""
+
+msgid "No service rule is active."
+msgstr ""
+
+msgid "Normal"
+msgstr ""
+
+msgid "Off, the rule only picks up traffic that no device rule matched. On, it also takes traffic from devices that have a limit, and that traffic leaves their limit behind: give the rule a ceiling of its own or it ends up with none."
+msgstr ""
+
+msgid "Only numbers, hyphens and commas."
+msgstr ""
+
+msgid "Only these devices"
+msgstr ""
+
+msgid "Override device limits"
+msgstr ""
+
+msgid "Packets the queue had to throw away because it was full."
+msgstr ""
+
+msgid "Ports"
+msgstr ""
+
+msgid "Priority"
+msgstr ""
+
+msgid "Profile"
+msgstr ""
+
+msgid "Profiles"
+msgstr ""
+
+msgid "Protocol"
+msgstr ""
+
 msgid "Queue ID"
+msgstr ""
+
+msgid "Queue discipline"
+msgstr ""
+
+msgid "Queues in use"
+msgstr ""
+
+msgid "Remote desktop"
+msgstr ""
+
+msgid "Replaces the section name when you pick the profile."
+msgstr ""
+
+msgid "Replaces the weight that comes with the priority level, from 1 to %d. Strict priority ignores it."
+msgstr ""
+
+msgid "Saturday"
+msgstr ""
+
+msgid "Schedule"
+msgstr ""
+
+msgid "Scheduling"
+msgstr ""
+
+msgid "Service"
+msgstr ""
+
+msgid "Service rules"
 msgstr ""
 
 msgid "Settings"
 msgstr ""
 
-msgid "This value is already in use."
+msgid "Share bandwidth"
 msgstr ""
 
-msgid "Total download bandwidth."
+msgid "Software on the LAN bridge"
 msgstr ""
 
-msgid "Total upload bandwidth."
+msgid "Software on the WAN device"
 msgstr ""
 
-msgid "Type"
+msgid "Sorts traffic by what it carries instead of by who sends it, so a call keeps its place in the queue whichever device places it. By default they only pick up traffic that no device rule matched, so the per-device limits stay intact. A rule can be told to take precedence, and then that traffic leaves the limit of its device."
+msgstr ""
+
+msgid "Speed in Mbit/s the scheduler keeps for this queue. Leave it at 0 to set only a ceiling."
+msgstr ""
+
+msgid "Speed in kbit/s a queue keeps when it asked for no guarantee and everything else is busy. Raise it to stop low priority devices from being squeezed to nothing, lower it to give the high priority ones more room."
+msgstr ""
+
+msgid "Status"
+msgstr ""
+
+msgid "Streaming"
+msgstr ""
+
+msgid "Strict priority"
+msgstr ""
+
+msgid "Sunday"
+msgstr ""
+
+msgid "TCP"
+msgstr ""
+
+msgid "TCP and UDP"
+msgstr ""
+
+msgid "The class the device writes into its own packets, which is the only handle left when a service moves to a port nobody published. Phones and softphones usually mark voice as EF."
+msgstr ""
+
+msgid "The devices that take this profile. Adding one here creates its rule for you, removing one deletes that rule."
+msgstr ""
+
+msgid "The hardware queues can shape upload only when the traffic reaches the QDMA scheduler, and that never happens on an external WAN device. Automatic switches to software shaping when it finds one."
+msgstr ""
+
+msgid "The ports the service listens on, separated by commas. A range is written with a hyphen, as in 10000-20000. Leave it empty to take the whole protocol."
+msgstr ""
+
+msgid "The rule follows the device when its address changes, because a new DHCP lease reloads it."
+msgstr ""
+
+msgid "The service assigns the queues itself, starting from the highest priority. When no hardware queue is left, the rule falls back to software shaping."
+msgstr ""
+
+msgid "The service is off and no limit is being enforced."
+msgstr ""
+
+msgid "Thursday"
+msgstr ""
+
+msgid "Top speed in Mbit/s. Use 0 to leave it unlimited."
+msgstr ""
+
+msgid "Total download speed of the line. Set it a little below what the line really delivers, around 95%, or the scheduler never becomes the bottleneck and priorities have nothing to arbitrate. Traffic that no device rule matches gets this as its limit."
+msgstr ""
+
+msgid "Total upload speed of the line. Set it a little below what the line really delivers, around 95%, or the scheduler never becomes the bottleneck and priorities have nothing to arbitrate. Traffic that no device rule matches gets this as its limit."
+msgstr ""
+
+msgid "Traffic"
+msgstr ""
+
+msgid "Traffic by device"
+msgstr ""
+
+msgid "Traffic by service"
+msgstr ""
+
+msgid "Tuesday"
+msgstr ""
+
+msgid "UDP"
 msgstr ""
 
 msgid "Upload"
 msgstr ""
 
-msgid "Values 1-31 use HNAT HQoS. Values 32 and above use software shaping."
+msgid "Upload now"
+msgstr ""
+
+msgid "Upload only"
+msgstr ""
+
+msgid "Upload shaping"
+msgstr ""
+
+msgid "Upload shaping in hardware starts only when the WAN device name begins with the one the accelerator knows about, so it never runs when the WAN is an external device."
+msgstr ""
+
+msgid "Use the rates and the priority of a profile instead of setting them here."
+msgstr ""
+
+msgid "Use the rates and the priority of a profile instead of setting them here. The rule still gets a queue of its own, since it is not a device."
+msgstr ""
+
+msgid "Video calls"
+msgstr ""
+
+msgid "Video meetings"
+msgstr ""
+
+msgid "VoIP"
+msgstr ""
+
+msgid "Voice calls"
+msgstr ""
+
+msgid "WAN device"
+msgstr ""
+
+msgid "Wednesday"
+msgstr ""
+
+msgid "Weight"
+msgstr ""
+
+msgid "Weight of critical"
+msgstr ""
+
+msgid "Weight of high"
+msgstr ""
+
+msgid "Weight of low"
+msgstr ""
+
+msgid "Weight of normal"
+msgstr ""
+
+msgid "Weighted round robin"
+msgstr ""
+
+msgid "Weighted round robin splits the line between the queues by weight. Strict priority always serves the highest queue first."
+msgstr ""
+
+msgid "What sits at the bottom of each queue. It does not change the rates, it decides how long a packet waits once a queue starts to fill. Automatic takes cake where the kernel has it and falls back to fq_codel."
+msgstr ""
+
+msgid "Whichever address you pick, the rule also covers the other addresses of the same host, so a device limited through its IPv4 lease is limited over IPv6 as well."
+msgstr ""
+
+msgid "Work"
+msgstr ""
+
+msgid "Write the time as HH:MM."
+msgstr ""
+
+msgid "automatic"
+msgstr ""
+
+msgid "cake"
+msgstr ""
+
+msgid "fq_codel"
+msgstr ""
+
+msgid "from priority"
+msgstr ""
+
+msgid "hardware queues"
+msgstr ""
+
+msgid "keeps %s"
+msgstr ""
+
+msgid "limits to %s"
+msgstr ""
+
+msgid "marked %s"
+msgstr ""
+
+msgid "max %s"
+msgstr ""
+
+msgid "members split one queue"
+msgstr ""
+
+msgid "min %s"
+msgstr ""
+
+msgid "no ceiling, so it can use the whole line"
+msgstr ""
+
+msgid "no device yet"
+msgstr ""
+
+msgid "no limit"
+msgstr ""
+
+msgid "no limit of its own, and served before everything else"
+msgstr ""
+
+msgid "none"
+msgstr ""
+
+msgid "not placed"
+msgstr ""
+
+msgid "nothing yet"
+msgstr ""
+
+msgid "of %s"
+msgstr ""
+
+msgid "served last, so it yields to everything else"
+msgstr ""
+
+msgid "shared with %d others"
 msgstr ""
 
 msgid "unlimited"

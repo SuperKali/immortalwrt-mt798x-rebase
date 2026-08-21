@@ -2,29 +2,78 @@
 
 DEV_DEFAULT="br-lan"
 IFB_DEV="ifb-eqos"
+AQM_PROBE_DEV="eqos-probe"
+AQM_QDISC=""
+AQM_CHECKED=""
+# cake also shapes on its own, but as a leaf it is used purely as an AQM; it is
+# preferred where present because it isolates hosts as well as flows.
+AQM_CANDIDATES="cake fq_codel"
+# Sovrascritti dalla configurazione: aqm sceglie la disciplina della foglia,
+# min_floor: the rate a class gets when it asked for no guarantee.
+AQM_WANTED=""
+TC_LOCAL_CLASSID="ffff"
+# Everything no filter claimed. Without it htb sends unclassified packets
+# straight out of the root, so the total was enforced on the rules and on
+# nothing else, and the leftover never showed up in any counter.
+TC_DEFAULT_CLASSID="fffd"
+# Filter preferences, read low to high. LAN-local traffic first, then the
+# service rules, then the per-device rules; leaving the device rules on the
+# slot number alone would have tied them with the local exemption at pref 1.
+# A preference belongs to one protocol: tc refuses a second protocol on a
+# preference already taken, so IPv4 and IPv6 need bands of their own.
+# A service rule that overrides the device rules is read before them; one that
+# does not is read after, so it only picks up what no device rule claimed.
+TC_TRAFFIC_PREF_BASE=100
+TC_TRAFFIC_PREF_BASE6=200
+TC_TRAFFIC_LOW_PREF_BASE=30000
+TC_TRAFFIC_LOW_PREF_BASE6=40000
+TC_DEVICE_PREF_BASE=1000
+TC_DEVICE_PREF_BASE6=20000
+TC_PREF_MAX=65535
+LAN_STATE="/var/run/eqos.lan"
 HNAT_DIR="/sys/kernel/debug/hnat"
 NFT="/usr/sbin/nft"
 
 TABLE_FAMILY="inet"
 TABLE_NAME="eqos"
 CHAIN_NAME="forward"
+CHAIN_GLOBAL="forward_global"
 MARK_CLEAR_MASK="0xffff0000"
+QUEUE_MARK_MASK="0x0000ffff"
 HNAT_EXCEPTION_MARK="0x99"
-HNAT_BIND_THRESHOLD=5
 HNAT_RESTART_DELAY=3
 
 QDMA_QUEUE_COUNT=64
 QDMA_RATE_MAX=1000000
-TOTAL_RATE_MAX=1000
+# What tc can shape. The hardware scheduler stops far lower, see hw_rate_max.
+TOTAL_RATE_MAX=10000
+# The driver refuses a scheduler rate above 1000000 kbit/s on NETSYS v2 and
+# above 10000000 on v3, so a total beyond that has to be clamped before it is
+# written or the whole write fails and the queues stay unprogrammed.
+HW_RATE_MAX_V2=1000
+HW_RATE_MAX_V3=10000
 UP_SCH=2
 DL_SCH=3
 UP_QID_BASE=1
 DL_QID_BASE=32
-QUEUE_SLOTS=31
+QUEUE_SLOTS=30
 TC_SLOT_MAX=65535
 PPD_QID=63
 MANAGED_QID_LAST=62
+GLOBAL_UP_QID=31
+GLOBAL_DL_QID=62
+WAN_STATE="/var/run/eqos.wan"
+WAN_DEFAULT_CLASSID="fffe"
+DEFAULT_WEIGHT=4
+WEIGHT_MAX=15
+# kbit/s handed to a class that asked for no guarantee. Overridable, because
+# how much a class keeps when it is being squeezed is a judgement about the
+# line, not a constant.
+TC_MIN_FLOOR_DEFAULT=128
+TC_MIN_FLOOR=128
+DEFAULT_BIND_RATE=5
 DEFAULT_QUEUE_CFG="0 0 0 0 0 0 4"
+TUNABLES_READ=""
 
 die() {
 	echo "eqos: $*" >&2
@@ -39,24 +88,81 @@ is_uinteger() {
 	return 0
 }
 
+# Four octets, each of them a number that fits in a byte. The old check only
+# looked at which characters appeared, so "0.0.0.0/0" walked straight through
+# and a rule written that way put the whole LAN inside one device's limit.
+# A prefix is refused on purpose: a rule matches a host, and a range would be
+# a different feature with different consequences.
 valid_ipv4() {
-	[ -n "$1" ] || return 1
+	local rest="$1"
+	local part n=0
 
-	case "$1" in
-		*[!0-9./]*) return 1 ;;
+	case "$rest" in
+		''|*[!0-9.]*|.*|*.|*..*) return 1 ;;
 	esac
 
-	return 0
+	while [ -n "$rest" ]; do
+		part="${rest%%.*}"
+
+		if [ "$part" = "$rest" ]; then
+			rest=""
+		else
+			rest="${rest#*.}"
+		fi
+
+		is_uinteger "$part" || return 1
+		[ "$part" -le 255 ] || return 1
+		n=$((n + 1))
+	done
+
+	[ "$n" -eq 4 ]
 }
 
+# Hex groups of at most four digits, eight of them, or fewer with one "::" to
+# stand in for the rest. Not a complete parser, but it refuses everything the
+# rules can actually be hurt by: prefixes, empty values and stray characters.
 valid_ipv6() {
-	[ -n "$1" ] || return 1
+	local v="$1"
+	local part n=0
 
-	case "$1" in
-		*[!0-9A-Fa-f:./]*) return 1 ;;
+	case "$v" in
+		''|*[!0-9A-Fa-f:]*|*:::*) return 1 ;;
+		:[!:]*|*[!:]:) return 1 ;;
 	esac
 
-	return 0
+	case "$v" in
+		*:*) ;;
+		*) return 1 ;;
+	esac
+
+	# Word splitting drops the empty field that "::" leaves behind, so this
+	# counts the groups that are really written out.
+	for part in $(echo "$v" | tr ':' ' '); do
+		[ "${#part}" -le 4 ] || return 1
+		n=$((n + 1))
+	done
+
+	[ "$n" -le 8 ] || return 1
+
+	case "$v" in
+		*::*) return 0 ;;
+	esac
+
+	[ "$n" -eq 8 ]
+}
+
+# Read once per run, because every invocation of this script is a new process.
+load_tunables() {
+	local v
+
+	[ -z "$TUNABLES_READ" ] || return 0
+	TUNABLES_READ=1
+
+	v="$(uci -q get eqos.config.min_floor)"
+	is_uinteger "$v" && [ "$v" -ge 1 ] && [ "$v" -le 100000 ] &&
+		TC_MIN_FLOOR="$v" || TC_MIN_FLOOR="$TC_MIN_FLOOR_DEFAULT"
+
+	AQM_WANTED="$(uci -q get eqos.config.aqm)"
 }
 
 need_nft() {
@@ -100,11 +206,125 @@ stop_qos() {
 	if tc qdisc show dev "$dev" 2>/dev/null | grep -q "qdisc htb 1:"; then
 		tc qdisc del dev "$dev" root 2>/dev/null
 	fi
+
+	# The ingress qdisc and the state file come down whatever happened to the
+	# IFB. Returning early when the IFB was already gone left the redirect
+	# behind, and the next start refused to run because the device still had
+	# an ingress qdisc: the service stayed down with no way to tell why.
+	tc qdisc del dev "$dev" ingress 2>/dev/null
+	rm -f "$LAN_STATE"
+
 	[ "$have_ifb" -eq 1 ] || return 0
 
-	tc qdisc del dev "$dev" ingress 2>/dev/null
 	tc qdisc del dev "$IFB_DEV" root 2>/dev/null
 	ip link del dev "$IFB_DEV" 2>/dev/null
+}
+
+# Everything entering the bridge is redirected, and that includes traffic
+# between two LAN hosts, which never touches the uplink and must not be charged
+# against an upload rate. It is sent to a class of its own, ahead of the
+# per-device filters, so it stays unshaped.
+# Probed rather than assumed: a kernel built without the qdisc has to degrade to
+# plain shaping instead of failing. Once per invocation - every run of this
+# script is a new process, so the answer cannot be carried over.
+detect_aqm() {
+	local q candidates
+
+	[ -z "$AQM_CHECKED" ] || return 0
+	AQM_CHECKED=1
+
+	[ -n "$AQM_WANTED" ] || AQM_WANTED="$(uci -q get eqos.config.aqm)"
+
+	case "$AQM_WANTED" in
+		none)
+			return 0
+			;;
+		cake|fq_codel)
+			candidates="$AQM_WANTED"
+			;;
+		*)
+			candidates="$AQM_CANDIDATES"
+			;;
+	esac
+
+	# Probed on a scratch device rather than on lo: the loopback qdisc belongs
+	# to the system, and a run that dies between the add and the del would
+	# leave it wearing something it never asked for.
+	ip link add "$AQM_PROBE_DEV" type dummy 2>/dev/null
+
+	for q in $candidates; do
+		if tc qdisc add dev "$AQM_PROBE_DEV" root "$q" 2>/dev/null; then
+			tc qdisc del dev "$AQM_PROBE_DEV" root 2>/dev/null
+			AQM_QDISC="$q"
+			break
+		fi
+	done
+
+	ip link del "$AQM_PROBE_DEV" 2>/dev/null
+
+	if [ -z "$AQM_QDISC" ] && [ -n "$AQM_WANTED" ] &&
+	   [ "$AQM_WANTED" != "auto" ]; then
+		echo "eqos: $AQM_WANTED is not available, leaf queues stay plain" >&2
+	fi
+
+	return 0
+}
+
+# A shaping class holds packets back, and by default it holds them in a plain
+# FIFO: the rate is respected but the queue grows and latency with it. An AQM on
+# the leaf keeps that queue short and lets a new flow through ahead of a bulk
+# transfer that is already backed up. Only leaf classes get one - a class with
+# children has no queue of its own.
+attach_aqm() {
+	local dev="$1"
+	local classid="$2"
+
+	detect_aqm
+	[ -n "$AQM_QDISC" ] || return 0
+
+	tc qdisc replace dev "$dev" parent "1:$classid" \
+		handle "$classid:" "$AQM_QDISC" 2>/dev/null || return 0
+}
+
+# Served after every rule: it holds what no rule claimed, so a device with a
+# limit is never made to wait behind traffic nobody asked for.
+tc_default_class() {
+	local dev="$1"
+	local rate="$2"
+
+	load_tunables
+	tc class add dev "$dev" parent 1:1 classid "1:$TC_DEFAULT_CLASSID" \
+		htb rate "${TC_MIN_FLOOR}kbit" ceil "${rate}kbit" \
+		prio 4 quantum 1500 \
+		burst "$(htb_burst "$rate")" cburst "$(htb_burst "$rate")" || return 1
+	attach_aqm "$dev" "$TC_DEFAULT_CLASSID"
+}
+
+tc_exempt_local() {
+	local dev="$1"
+	local prefix
+
+	tc class add dev "$IFB_DEV" parent 1: classid "1:$TC_LOCAL_CLASSID" \
+		htb rate "${TOTAL_RATE_MAX}mbit" ceil "${TOTAL_RATE_MAX}mbit" \
+		prio 0 quantum 60000 \
+		burst "$(htb_burst $((TOTAL_RATE_MAX * 1000)))" \
+		cburst "$(htb_burst $((TOTAL_RATE_MAX * 1000)))" || return 1
+	attach_aqm "$IFB_DEV" "$TC_LOCAL_CLASSID"
+
+	for prefix in $(ip -4 -o addr show dev "$dev" 2>/dev/null | awk '{print $4}'); do
+		tc filter add dev "$IFB_DEV" parent 1: protocol ip pref 1 u32 \
+			match ip dst "$prefix" flowid "1:$TC_LOCAL_CLASSID" || return 1
+	done
+
+	for prefix in $(ip -6 -o addr show dev "$dev" scope global 2>/dev/null |
+			awk '{print $4}'); do
+		tc filter add dev "$IFB_DEV" parent 1: protocol ipv6 pref 2 u32 \
+			match ip6 dst "$prefix" flowid "1:$TC_LOCAL_CLASSID" || return 1
+	done
+
+	# Link-local traffic never leaves the segment either.
+	tc filter add dev "$IFB_DEV" parent 1: protocol ipv6 pref 2 u32 \
+		match ip6 dst fe80::/10 flowid "1:$TC_LOCAL_CLASSID" || return 1
 }
 
 start_qos() {
@@ -131,18 +351,31 @@ start_qos() {
 	ip link add "$IFB_DEV" type ifb || return 1
 
 	if ! ip link set dev "$IFB_DEV" up ||
-	   ! tc qdisc add dev "$dev" root handle 1: htb ||
-	   ! tc class add dev "$dev" parent 1: classid 1:1 htb rate "${dl}mbit" ||
-	   ! tc qdisc add dev "$IFB_DEV" root handle 1: htb ||
-	   ! tc class add dev "$IFB_DEV" parent 1: classid 1:1 htb rate "${up}mbit" ||
+	   ! tc qdisc add dev "$dev" root handle 1: htb \
+		default "$TC_DEFAULT_CLASSID" ||
+	   ! tc class add dev "$dev" parent 1: classid 1:1 htb \
+		rate "${dl}mbit" ceil "${dl}mbit" \
+		burst "$(htb_burst $((dl * 1000)))" \
+		cburst "$(htb_burst $((dl * 1000)))" ||
+	   ! tc_default_class "$dev" $((dl * 1000)) ||
+	   ! tc qdisc add dev "$IFB_DEV" root handle 1: htb \
+		default "$TC_DEFAULT_CLASSID" ||
+	   ! tc class add dev "$IFB_DEV" parent 1: classid 1:1 htb \
+		rate "${up}mbit" ceil "${up}mbit" \
+		burst "$(htb_burst $((up * 1000)))" \
+		cburst "$(htb_burst $((up * 1000)))" ||
+	   ! tc_default_class "$IFB_DEV" $((up * 1000)) ||
 	   ! tc qdisc add dev "$dev" ingress ||
 	   ! tc filter add dev "$dev" parent ffff: protocol ip pref 1 u32 \
 		match u32 0 0 action mirred egress redirect dev "$IFB_DEV" ||
 	   ! tc filter add dev "$dev" parent ffff: protocol ipv6 pref 2 u32 \
-		match u32 0 0 action mirred egress redirect dev "$IFB_DEV"; then
+		match u32 0 0 action mirred egress redirect dev "$IFB_DEV" ||
+	   ! tc_exempt_local "$dev"; then
 		stop_qos "$dev"
 		return 1
 	fi
+
+	printf '%s' "$dev" > "$LAN_STATE"
 }
 
 nft_stop() {
@@ -161,6 +394,10 @@ table $TABLE_FAMILY $TABLE_NAME {
 	chain $CHAIN_NAME {
 		type filter hook forward priority mangle; policy accept;
 	}
+
+	chain $CHAIN_GLOBAL {
+		type filter hook forward priority mangle + 10; policy accept;
+	}
 }
 EOF
 
@@ -170,6 +407,22 @@ EOF
 	"$NFT" add rule "$TABLE_FAMILY" "$TABLE_NAME" "$CHAIN_NAME" \
 		oifname "$dev" meta mark != "$HNAT_EXCEPTION_MARK" \
 		meta mark set meta mark '&' "$MARK_CLEAR_MASK" || return 1
+
+	# Catch-all for traffic that no device rule claimed. This chain runs at a
+	# later hook priority than $CHAIN_NAME, so it always sees the final mark
+	# regardless of when add_rule appends its per-device rules. Flows that
+	# already carry a queue id keep it, and the software-shaped flows tagged
+	# with $HNAT_EXCEPTION_MARK are skipped because their mark is non-zero.
+	# $dev is excluded on both sides so bridged LAN-to-LAN traffic is not
+	# accounted as download.
+	"$NFT" add rule "$TABLE_FAMILY" "$TABLE_NAME" "$CHAIN_GLOBAL" \
+		iifname "$dev" oifname != "$dev" \
+		meta mark '&' "$QUEUE_MARK_MASK" 0 \
+		counter meta mark set "$GLOBAL_UP_QID" || return 1
+	"$NFT" add rule "$TABLE_FAMILY" "$TABLE_NAME" "$CHAIN_GLOBAL" \
+		iifname != "$dev" oifname "$dev" \
+		meta mark '&' "$QUEUE_MARK_MASK" 0 \
+		counter meta mark set "$GLOBAL_DL_QID" || return 1
 }
 
 reset_hnat_qdma() {
@@ -186,15 +439,70 @@ reset_hnat_qdma() {
 	done
 }
 
-start_hnat_qos() {
+# reset_hnat_qdma() parks every queue on scheduler 0 and qid0 is never
+# programmed at all, so without a catch-all queue attached to $UP_SCH/$DL_SCH
+# the total rates would only cap the sum of the per-device queues and any
+# unclassified traffic would stay unshaped. These two queues carry everything
+# the device rules did not match, at the configured total rate.
+# NETSYS v3 and later carry a wider rate field. The compatible string is the
+# only thing available from user space that tells the generations apart.
+hw_rate_max() {
+	local compat
+
+	compat=""
+	[ ! -r /proc/device-tree/compatible ] ||
+		compat="$(tr '\0' ' ' < /proc/device-tree/compatible 2>/dev/null)"
+
+	case "$compat" in
+		*mt7988*|*mt7987*) echo "$HW_RATE_MAX_V3" ;;
+		*) echo "$HW_RATE_MAX_V2" ;;
+	esac
+}
+
+clamp_hw_rate() {
+	local rate="$1"
+	local max
+
+	max="$(hw_rate_max)"
+	[ "$rate" -le "$max" ] || rate="$max"
+	echo "$rate"
+}
+
+program_global_queues() {
 	local dl="$1"
 	local up="$2"
 
+	dl="$(clamp_hw_rate "$dl")"
+	up="$(clamp_hw_rate "$up")"
+
+	write_hnat "qdma_txq$GLOBAL_UP_QID" "$UP_SCH 0 0 1 $((up * 1000)) 4 1"
+	write_hnat "qdma_txq$GLOBAL_DL_QID" "$DL_SCH 0 0 1 $((dl * 1000)) 4 1"
+}
+
+start_hnat_qos() {
+	local dl="$1"
+	local up="$2"
+	local direction="$3"
+	local sched="$4"
+
+	case "$sched" in
+		wrr|sp) ;;
+		*) sched="wrr" ;;
+	esac
+
 	need_qdma_layout
-	write_hnat "qos_toggle" "1"
+	# qos_toggle accepts "1", "1 uplink" or "1 downlink". Uplink HQoS only ever
+	# triggers when the egress device matches hnat_wan_if, so on a router whose
+	# WAN is an external device it is better to say so explicitly.
+	case "$direction" in
+		uplink) write_hnat "qos_toggle" "1 uplink" ;;
+		downlink) write_hnat "qos_toggle" "1 downlink" ;;
+		*) write_hnat "qos_toggle" "1" ;;
+	esac
 	reset_hnat_qdma
-	write_hnat "qdma_sch$UP_SCH" "1 wrr $((up * 1000))"
-	write_hnat "qdma_sch$DL_SCH" "1 wrr $((dl * 1000))"
+	write_hnat "qdma_sch$UP_SCH" "1 $sched $(($(clamp_hw_rate "$up") * 1000))"
+	write_hnat "qdma_sch$DL_SCH" "1 $sched $(($(clamp_hw_rate "$dl") * 1000))"
+	program_global_queues "$dl" "$up"
 }
 
 stop_hnat_qos() {
@@ -206,7 +514,11 @@ stop_hnat_qos() {
 }
 
 enable_hnat() {
-	local fastpath bind_rate hook_state
+	local bind_rate="$1"
+	local fastpath cur_bind_rate hook_state
+
+	is_uinteger "$bind_rate" && [ "$bind_rate" -ge 1 ] && [ "$bind_rate" -le 30 ] ||
+		bind_rate="$DEFAULT_BIND_RATE"
 
 	need_hnat
 	hook_state="$(cat "$HNAT_DIR/hook_toggle")"
@@ -225,17 +537,17 @@ enable_hnat() {
 	write_hnat "hook_toggle" "1"
 	[ "$(cat "$HNAT_DIR/hook_toggle")" = "enabled" ] ||
 		die "failed to enable HNAT hooks"
-	write_hnat "hnat_setting" "1 $HNAT_BIND_THRESHOLD"
+	write_hnat "hnat_setting" "1 $bind_rate"
 
 	[ -f /etc/config/turboacc ] || return 0
 
 	fastpath="$(uci -q get turboacc.config.fastpath)"
-	bind_rate="$(uci -q get turboacc.config.fastpath_mh_bind_rate)"
+	cur_bind_rate="$(uci -q get turboacc.config.fastpath_mh_bind_rate)"
 	[ "$fastpath" = "mediatek_hnat" ] &&
-		[ "$bind_rate" = "$HNAT_BIND_THRESHOLD" ] && return 0
+		[ "$cur_bind_rate" = "$bind_rate" ] && return 0
 
 	if ! uci -q set "turboacc.config.fastpath=mediatek_hnat" ||
-	   ! uci -q set "turboacc.config.fastpath_mh_bind_rate=$HNAT_BIND_THRESHOLD" ||
+	   ! uci -q set "turboacc.config.fastpath_mh_bind_rate=$bind_rate" ||
 	   ! uci -q commit turboacc; then
 		die "failed to synchronize turboacc HNAT settings"
 	fi
@@ -278,13 +590,36 @@ ensure_tc_qos() {
 	start_qos "$dev" "$dl" "$up"
 }
 
+# The queue register takes
+#   <scheduler> <min_en> <min_rate> <max_en> <max_rate> <weight> <resv>
+# min_rate is the bandwidth the scheduler guarantees to this queue, max_rate
+# the ceiling, and weight the WRR share used when the scheduler is congested.
 program_queue() {
 	local qid="$1"
 	local sch="$2"
 	local rate="$3"
+	local min_rate="$4"
+	local weight="$5"
+	local min_en=0
+	local max_en=1
 
-	[ "$rate" -eq 0 ] && return 0
-	write_hnat "qdma_txq$qid" "$sch 0 0 1 $rate 4 1"
+	# A rate of 0 means no ceiling. The queue is still worth programming: it
+	# carries the guaranteed rate and the weight, so a rule can express "no
+	# limit, just priority".
+	is_uinteger "$rate" || rate=0
+	[ "$rate" -gt 0 ] || max_en=0
+	is_uinteger "$min_rate" || min_rate=0
+	is_uinteger "$weight" || weight="$DEFAULT_WEIGHT"
+	[ "$max_en" -eq 0 ] || [ "$min_rate" -le "$rate" ] || min_rate="$rate"
+	[ "$min_rate" -gt 0 ] && min_en=1
+	write_hnat "qdma_txq$qid" "$sch $min_en $min_rate $max_en $rate $weight 1"
+}
+
+tc_pref() {
+	local pref="$1"
+
+	[ "$pref" -le "$TC_PREF_MAX" ] || pref="$TC_PREF_MAX"
+	echo "$pref"
 }
 
 tc_filter_rule() {
@@ -327,6 +662,47 @@ tc_filter_rule() {
 	esac
 }
 
+htb_prio() {
+	local weight="$1"
+
+	is_uinteger "$weight" || weight="$DEFAULT_WEIGHT"
+
+	if [ "$weight" -ge 15 ]; then
+		echo 0
+	elif [ "$weight" -ge 8 ]; then
+		echo 1
+	elif [ "$weight" -ge 4 ]; then
+		echo 2
+	else
+		echo 3
+	fi
+}
+
+# A token bucket that can only hold a packet or two cannot deliver the rate it
+# was given: tc left burst at its floor and a class set to 1 Gbit never got
+# near it. One millisecond of traffic is the usual compromise, enough to fill
+# the pipe without parking a visible queue in the bucket.
+htb_burst() {
+	local rate="$1"
+	local bytes
+
+	is_uinteger "$rate" && [ "$rate" -gt 0 ] || rate=1000
+	bytes=$((rate / 8))
+	[ "$bytes" -ge 1600 ] || bytes=1600
+	echo "$bytes"
+}
+
+htb_quantum() {
+	local weight="$1"
+
+	is_uinteger "$weight" || weight="$DEFAULT_WEIGHT"
+	[ "$weight" -ge 1 ] || weight=1
+	[ "$weight" -le "$WEIGHT_MAX" ] || weight="$WEIGHT_MAX"
+	echo $((weight * 1500))
+}
+
+# The class plus the filters that send a device to it. The class itself is
+# built by program_tc_class, which the service rules use on their own.
 program_tc_queue() {
 	local dir="$1"
 	local slot="$2"
@@ -334,6 +710,8 @@ program_tc_queue() {
 	local ip4="$4"
 	local ip6="$5"
 	local dev="$6"
+	local min_rate="$7"
+	local weight="$8"
 	local classid tcdev
 
 	[ "$rate" -eq 0 ] && return 0
@@ -347,79 +725,122 @@ program_tc_queue() {
 	esac
 
 	classid="$(tc_classid_from_slot "$slot")"
-	tc class replace dev "$tcdev" parent 1:1 classid "1:$classid" \
-		htb rate "${rate}kbit" ceil "${rate}kbit" || return 1
-	tc_filter_rule "$dir" ip "$ip4" "$slot" "$classid" "$dev" || return 1
-	tc_filter_rule "$dir" ip6 "$ip6" "$slot" "$classid" "$dev" || return 1
+	program_tc_class "$tcdev" "$classid" "$rate" "$min_rate" "$weight" ||
+		return 1
+	tc_filter_rule "$dir" ip "$ip4" \
+		"$(tc_pref $((TC_DEVICE_PREF_BASE + slot)))" "$classid" "$dev" ||
+		return 1
+	tc_filter_rule "$dir" ip6 "$ip6" \
+		"$(tc_pref $((TC_DEVICE_PREF_BASE6 + slot)))" "$classid" "$dev" ||
+		return 1
+}
+
+# One rule per address and direction. Two callers want it: the queue mark, which
+# must leave a flow already tagged for exclusion alone, and the exclusion tag
+# itself, which is set whatever the mark was.
+#
+# The counter is what lets a device that shares a queue still be accounted for
+# on its own: the exception tag keeps every one of its packets on the netfilter
+# path, so this counter sees all of them.
+nft_addr_rule() {
+	local dir="$1"
+	local family="$2"
+	local value="$3"
+	local mark="$4"
+	local guarded="$5"
+	local addr guard=""
+
+	[ -n "$value" ] || return 0
+
+	case "$dir" in
+		up) addr="saddr" ;;
+		dl) addr="daddr" ;;
+		*) return 1 ;;
+	esac
+
+	case "$family" in
+		ip|ip6) ;;
+		*) return 1 ;;
+	esac
+
+	[ "$guarded" != "1" ] || guard="meta mark != $HNAT_EXCEPTION_MARK"
+
+	"$NFT" add rule "$TABLE_FAMILY" "$TABLE_NAME" "$CHAIN_NAME" \
+		"$family" "$addr" "$value" $guard counter meta mark set "$mark"
 }
 
 nft_mark_rule() {
-	local dir="$1"
-	local family="$2"
-	local value="$3"
-	local qid="$4"
-	local addr
-
-	[ -n "$value" ] || return 0
-
-	case "$dir" in
-		up) addr="saddr" ;;
-		dl) addr="daddr" ;;
-		*)
-			return 1
-			;;
-	esac
-
-	case "$family" in
-		ip)
-			"$NFT" add rule "$TABLE_FAMILY" "$TABLE_NAME" "$CHAIN_NAME" \
-				ip "$addr" "$value" \
-				meta mark != "$HNAT_EXCEPTION_MARK" \
-				meta mark set "$qid"
-			;;
-		ip6)
-			"$NFT" add rule "$TABLE_FAMILY" "$TABLE_NAME" "$CHAIN_NAME" \
-				ip6 "$addr" "$value" \
-				meta mark != "$HNAT_EXCEPTION_MARK" \
-				meta mark set "$qid"
-			;;
-		*)
-			return 1
-			;;
-	esac
+	nft_addr_rule "$1" "$2" "$3" "$4" 1
 }
 
 nft_exception_rule() {
-	local dir="$1"
-	local family="$2"
-	local value="$3"
-	local addr
+	nft_addr_rule "$1" "$2" "$3" "$HNAT_EXCEPTION_MARK" 0
+}
 
-	[ -n "$value" ] || return 0
+# Uplink HQoS only engages when the egress device matches hnat_wan_if, and the
+# PPE never puts traffic bound for an external device through the QDMA
+# scheduler at all (FROM_EXT(skb) forces fqos = 0). On such a WAN - a USB
+# modem, a PPPoE session, anything not named after hnat_wan_if - upload has to
+# be shaped on the WAN device itself. HNAT hands packets to external devices
+# with dev_queue_xmit(), so a qdisc there sees accelerated flows too.
+#
+# This shaper enforces the total only. A per-device class here is not possible:
+# the packets are already SNATed, so the source address is gone, and the
+# firewall mark cannot stand in for it because HNAT never restores the mark on
+# a flow it has bound - everything accelerated would land in the default class.
+# Per-device upload is shaped on the LAN ingress instead, see add_rule.
+#
+# Layout: 1:1 carries the total and $WAN_DEFAULT_CLASSID collects everything.
+wan_stop() {
+	local dev
 
-	case "$dir" in
-		up) addr="saddr" ;;
-		dl) addr="daddr" ;;
+	[ -f "$WAN_STATE" ] || return 0
+	dev="$(cat "$WAN_STATE" 2>/dev/null)"
+	if [ -n "$dev" ] && [ -d "/sys/class/net/$dev" ]; then
+		tc qdisc del dev "$dev" root 2>/dev/null
+	fi
+	rm -f "$WAN_STATE"
+}
+
+wan_start() {
+	local dev="$1"
+	local up="$2"
+	local root_qdisc
+
+	[ -n "$dev" ] || die "WAN device is required"
+	[ -d "/sys/class/net/$dev" ] || die "WAN device $dev does not exist"
+	is_uinteger "$up" || die "upload rate must be an integer"
+	[ "$up" -gt 0 ] || die "upload rate must be greater than 0"
+	[ "$up" -le "$TOTAL_RATE_MAX" ] ||
+		die "upload rate must not exceed $TOTAL_RATE_MAX Mbit/s"
+
+	wan_stop
+
+	root_qdisc="$(tc qdisc show dev "$dev" 2>/dev/null | sed -n '/ root /p')"
+	case "$root_qdisc" in
+		''|qdisc\ noqueue\ 0:*|qdisc\ noop\ 0:*|qdisc\ fq_codel\ 0:*|qdisc\ pfifo_fast\ 0:*) ;;
 		*)
+			echo "eqos: $dev already has a root qdisc" >&2
 			return 1
 			;;
 	esac
 
-	case "$family" in
-		ip)
-			"$NFT" add rule "$TABLE_FAMILY" "$TABLE_NAME" "$CHAIN_NAME" \
-				ip "$addr" "$value" \
-				meta mark set "$HNAT_EXCEPTION_MARK"
-			;;
-		ip6)
-			"$NFT" add rule "$TABLE_FAMILY" "$TABLE_NAME" "$CHAIN_NAME" \
-				ip6 "$addr" "$value" \
-				meta mark set "$HNAT_EXCEPTION_MARK"
-			;;
-		*)
-			return 1
-			;;
-	esac
+	tc qdisc add dev "$dev" root handle 1: htb default "$WAN_DEFAULT_CLASSID" || return 1
+	if ! tc class add dev "$dev" parent 1: classid 1:1 \
+		htb rate "${up}mbit" ceil "${up}mbit" \
+		burst "$(htb_burst $((up * 1000)))" \
+		cburst "$(htb_burst $((up * 1000)))" ||
+	   ! tc class add dev "$dev" parent 1:1 classid "1:$WAN_DEFAULT_CLASSID" \
+		htb rate "${TC_MIN_FLOOR}kbit" ceil "${up}mbit" \
+		burst "$(htb_burst $((up * 1000)))" \
+		cburst "$(htb_burst $((up * 1000)))"; then
+		tc qdisc del dev "$dev" root 2>/dev/null
+		return 1
+	fi
+
+	attach_aqm "$dev" "$WAN_DEFAULT_CLASSID"
+
+	printf '%s' "$dev" > "$WAN_STATE"
 }
 
 add_rule() {
@@ -430,12 +851,19 @@ add_rule() {
 	local ip6="$5"
 	local total_dl="$6"
 	local total_up="$7"
+	local min_dl="$8"
+	local min_up="$9"
+	local weight="${10}"
+	local up_soft="${11}"
+	local dl_soft="${12}"
 	local dev="$DEV_DEFAULT"
-	local up_qid dl_qid selector_count
+	local classid selector_count
 
 	is_uinteger "$slot" || die "queue slot must be an integer"
 	is_uinteger "$dl" || die "download rate must be an integer"
 	is_uinteger "$up" || die "upload rate must be an integer"
+	is_uinteger "$total_dl" || total_dl=0
+	is_uinteger "$total_up" || total_up=0
 
 	[ "$slot" -ge 1 ] && [ "$slot" -le "$TC_SLOT_MAX" ] ||
 		die "queue slot must be between 1 and $TC_SLOT_MAX"
@@ -452,45 +880,523 @@ add_rule() {
 	[ "$selector_count" -eq 1 ] ||
 		die "exactly one selector is required: IPv4 or IPv6"
 
-	[ "$dl" -ne 0 ] || [ "$up" -ne 0 ] || return 0
+	need_nft
+	need_qdma_layout
+
+	# Download to a Wi-Fi client leaves the PPE for the wireless DMA and never
+	# reaches the QDMA scheduler, so a hardware queue cannot cap it. Upload on
+	# a WAN the PPE will not schedule has the same problem from the other side.
+	# Either way the answer is the same: build a software class instead, and
+	# let classify_address tag the flow so the accelerator leaves it alone.
+	if [ "$slot" -gt "$QUEUE_SLOTS" ]; then
+		up_soft=1
+		dl_soft=1
+	fi
+
+	classid="$(tc_classid_from_slot "$slot")"
+
+	if [ "$dl_soft" = "1" ]; then
+		ensure_tc_qos "$dev" "$total_dl" "$total_up" || return 1
+		[ "$dl" -ne 0 ] || dl=$((total_dl * 1000))
+		program_tc_class "$dev" "$classid" "$dl" "$min_dl" "$weight" ||
+			return 1
+	else
+		program_queue "$(queue_from_slot "$slot" dl)" "$DL_SCH" \
+			"$dl" "$min_dl" "$weight" || return 1
+	fi
+
+	if [ "$up_soft" = "1" ]; then
+		ensure_tc_qos "$dev" "$total_dl" "$total_up" || return 1
+		[ "$up" -ne 0 ] || up=$((total_up * 1000))
+		program_tc_class "$IFB_DEV" "$classid" "$up" "$min_up" "$weight" ||
+			return 1
+	else
+		program_queue "$(queue_from_slot "$slot" up)" "$UP_SCH" \
+			"$up" "$min_up" "$weight" || return 1
+	fi
+
+	classify_address "$slot" "$ip4" "$ip6" "$up_soft" "$dl_soft"
+}
+
+# A service rule claims a queue by what a flow carries instead of by who sends
+# it, so a call keeps its place in the queue whichever device places it. Only
+# the hardware path is programmed: the mark picks the queue and the flow stays
+# accelerated, which is the whole point of sorting by service. A hard cap on
+# one device is what a device rule is for.
+#
+# Direction comes from the bridge, not from the port: a packet leaving the LAN
+# carries the service port as its destination, and the answer carries it as its
+# source. The exception tag is left alone, so a device already shaped in
+# software keeps its own limit and does not escape it through a service rule.
+# u32 is the only classifier this kernel has: cls_flower and cls_basic are both
+# absent, and u32 matches a value and a mask, never a range. So a port range
+# becomes the smallest set of prefixes that covers it, which is the classic
+# decomposition: take the largest aligned power of two that still fits, emit it,
+# move on. 10000-20000 comes out as about two dozen matches, which u32 handles
+# without noticing.
+port_blocks() {
+	local lo="$1"
+	local hi="$2"
+	local size
+
+	is_uinteger "$lo" && is_uinteger "$hi" || return 0
+	[ "$lo" -ge 1 ] && [ "$hi" -le 65535 ] && [ "$lo" -le "$hi" ] || return 0
+
+	while [ "$lo" -le "$hi" ]; do
+		size=1
+		while [ $((lo % (size * 2))) -eq 0 ] &&
+		      [ $((lo + size * 2 - 1)) -le "$hi" ]; do
+			size=$((size * 2))
+		done
+		# tc refuses a decimal mask, so it goes out in hex.
+		printf '%d 0x%04x\n' "$lo" $((65536 - size))
+		lo=$((lo + size))
+	done
+}
+
+dscp_value() {
+	case "$1" in
+		ef) echo 46 ;;
+		be|cs0) echo 0 ;;
+		cs1) echo 8 ;; cs2) echo 16 ;; cs3) echo 24 ;;
+		cs4) echo 32 ;; cs5) echo 40 ;; cs6) echo 48 ;; cs7) echo 56 ;;
+		af11) echo 10 ;; af12) echo 12 ;; af13) echo 14 ;;
+		af21) echo 18 ;; af22) echo 20 ;; af23) echo 22 ;;
+		af31) echo 26 ;; af32) echo 28 ;; af33) echo 30 ;;
+		af41) echo 34 ;; af42) echo 36 ;; af43) echo 38 ;;
+		*) is_uinteger "$1" && [ "$1" -le 63 ] && echo "$1" ;;
+	esac
+}
+
+# Upload only. The download half is classified by skb->priority, which nftables
+# sets on the way out, but the upload half is redirected to the IFB at the
+# bridge ingress hook, and that runs before netfilter: by the time a mark or a
+# priority could be set the packet has already been classified. Hence real
+# filters here, and a preference low enough to be read before the per-device
+# ones so a call is sorted by what it is rather than by who placed it.
+tc_traffic_filters() {
+	local proto="$1"
+	local ports="$2"
+	local dscp="$3"
+	local slot="$4"
+	local classid="$5"
+	local override="$6"
+	local v4="$7"
+	local pref pref6 src srcs
+
+	if [ "$override" = "1" ]; then
+		pref=$((TC_TRAFFIC_PREF_BASE + slot))
+		pref6=$((TC_TRAFFIC_PREF_BASE6 + slot))
+	else
+		pref=$((TC_TRAFFIC_LOW_PREF_BASE + slot))
+		pref6=$((TC_TRAFFIC_LOW_PREF_BASE6 + slot))
+	fi
+
+	pref="$(tc_pref "$pref")"
+	pref6="$(tc_pref "$pref6")"
+	local p pnum spec lo hi val mask tos
+
+	# One filter per address: u32 has no sets. With no scope, one filter that
+	# ignores the address covers it.
+	srcs="$v4"
+	[ -n "$srcs" ] || srcs="-"
+
+	for p in $proto; do
+		case "$p" in
+			tcp) pnum=6 ;;
+			udp) pnum=17 ;;
+			*) continue ;;
+		esac
+
+		if [ -z "$ports" ]; then
+			tc filter add dev "$IFB_DEV" parent 1: protocol ip pref "$pref" \
+				u32 match ip protocol "$pnum" 0xff \
+				flowid "1:$classid" 2>/dev/null
+			tc filter add dev "$IFB_DEV" parent 1: protocol ipv6 pref "$pref6" \
+				u32 match ip6 protocol "$pnum" 0xff \
+				flowid "1:$classid" 2>/dev/null
+			continue
+		fi
+
+		for spec in $(echo "$ports" | tr ',' ' '); do
+			case "$spec" in
+				*-*)
+					lo="${spec%%-*}"
+					hi="${spec##*-}"
+					;;
+				*)
+					lo="$spec"
+					hi="$spec"
+					;;
+			esac
+
+			port_blocks "$lo" "$hi" | while read -r val mask; do
+				for src in $srcs; do
+					if [ "$src" = "-" ]; then
+						tc filter add dev "$IFB_DEV" parent 1: protocol ip \
+							pref "$pref" u32 \
+							match ip protocol "$pnum" 0xff \
+							match ip dport "$val" "$mask" \
+							flowid "1:$classid" 2>/dev/null
+						tc filter add dev "$IFB_DEV" parent 1: protocol ipv6 \
+							pref "$pref6" u32 \
+							match ip6 protocol "$pnum" 0xff \
+							match ip6 dport "$val" "$mask" \
+							flowid "1:$classid" 2>/dev/null
+					else
+						tc filter add dev "$IFB_DEV" parent 1: protocol ip \
+							pref "$pref" u32 \
+							match ip protocol "$pnum" 0xff \
+							match ip dport "$val" "$mask" \
+							match ip src "$src" \
+							flowid "1:$classid" 2>/dev/null
+					fi
+				done
+			done
+		done
+	done
+
+	[ -n "$dscp" ] || return 0
+
+	tos="$(dscp_value "$dscp")"
+	[ -n "$tos" ] || return 0
+	tos=$((tos * 4))
+
+	for src in $srcs; do
+		if [ "$src" = "-" ]; then
+			tc filter add dev "$IFB_DEV" parent 1: protocol ip pref "$pref" \
+				u32 match ip tos "$tos" 0xfc \
+				flowid "1:$classid" 2>/dev/null
+			tc filter add dev "$IFB_DEV" parent 1: protocol ipv6 \
+				pref "$pref6" u32 match ip6 priority "$tos" 0xfc \
+				flowid "1:$classid" 2>/dev/null
+		else
+			tc filter add dev "$IFB_DEV" parent 1: protocol ip pref "$pref" \
+				u32 match ip tos "$tos" 0xfc match ip src "$src" \
+				flowid "1:$classid" 2>/dev/null
+		fi
+	done
+
+	return 0
+}
+
+# Two rules per match, and the order matters.
+#
+# The first sets skb->priority to the class of this rule and does it
+# unconditionally. HTB reads skb->priority before it runs a single filter, so
+# this overrides the filter that would put the packet on its device class. It
+# has to ignore the exception tag: a device shaped in software carries that tag
+# on every packet, and skipping those is what kept a call from ever being
+# sorted on exactly the routers that shape in software.
+#
+# The second sets the hardware queue, and there the tag must be respected: the
+# tag is what keeps a software shaped flow off the PPE, and overwriting it
+# would hand the flow back to the accelerator and let it escape its limit.
+nft_traffic_emit() {
+	local sel="$1"
+	local match="$2"
+	local qid="$3"
+	local classid="$4"
+	local override="$5"
+	local guard=""
+
+	# Taking a flow out of its device class also takes it out of that device's
+	# limit, and a rule with no ceiling of its own then has none at all. A wide
+	# rule left to override, say every HTTPS connection, empties every
+	# per-device limit on the router. So the class is claimed only when the
+	# rule was told to, and otherwise the device keeps what it already had.
+	[ "$override" = "1" ] || guard="meta mark != $HNAT_EXCEPTION_MARK"
+
+	"$NFT" add rule "$TABLE_FAMILY" "$TABLE_NAME" "$CHAIN_NAME" \
+		$sel $match $guard counter meta priority set "1:$classid" || return 1
+
+	"$NFT" add rule "$TABLE_FAMILY" "$TABLE_NAME" "$CHAIN_NAME" \
+		$sel $match meta mark != "$HNAT_EXCEPTION_MARK" \
+		meta mark set "$qid" || return 1
+}
+
+# Direction comes from the bridge, not from the port: a packet leaving the LAN
+# carries the service port as its destination, and the answer carries it as its
+# source.
+# The scope of a rule, as an nftables address set. Empty means the whole LAN,
+# which is what a rule without a device list is.
+nft_scope() {
+	local dir="$1"
+	local family="$2"
+	local addrs="$3"
+	local key list=""
+	local a
+
+	[ -n "$addrs" ] || return 0
+
+	case "$dir" in
+		up) key="saddr" ;;
+		dl) key="daddr" ;;
+		*) return 1 ;;
+	esac
+
+	for a in $addrs; do
+		list="${list:+$list, }$a"
+	done
+
+	echo "$family $key { $list }"
+}
+
+nft_traffic_rule() {
+	local dir="$1"
+	local proto="$2"
+	local ports="$3"
+	local dscp="$4"
+	local qid="$5"
+	local classid="$6"
+	local override="$7"
+	local v4="$8"
+	local v6="$9"
+	local dev="$DEV_DEFAULT"
+	local sel field p fam scope scopes
+
+	case "$dir" in
+		up)
+			sel="iifname $dev oifname != $dev"
+			field="dport"
+			;;
+		dl)
+			sel="iifname != $dev oifname $dev"
+			field="sport"
+			;;
+		*)
+			return 1
+			;;
+	esac
+
+	# One pass per family that the rule was scoped to, or a single pass with no
+	# address condition when it was not scoped at all.
+	scopes=""
+	[ -z "$v4" ] || scopes="$scopes|$(nft_scope "$dir" ip "$v4")"
+	[ -z "$v6" ] || scopes="$scopes|$(nft_scope "$dir" ip6 "$v6")"
+	[ -n "$scopes" ] || scopes="|"
+
+	local rest="$scopes"
+	while [ -n "$rest" ]; do
+		rest="${rest#|}"
+		scope="${rest%%|*}"
+		case "$rest" in
+			*"|"*) rest="|${rest#*|}" ;;
+			*) rest="" ;;
+		esac
+
+		nft_traffic_pass "$sel" "$scope" "$proto" "$ports" "$dscp" \
+			"$field" "$qid" "$classid" "$override" || return 1
+	done
+}
+
+nft_traffic_pass() {
+	local sel="$1"
+	local scope="$2"
+	local proto="$3"
+	local ports="$4"
+	local dscp="$5"
+	local field="$6"
+	local qid="$7"
+	local classid="$8"
+	local override="$9"
+	local p fam
+
+	for p in $proto; do
+		if [ -n "$ports" ]; then
+			nft_traffic_emit "$sel $scope" "$p $field { $ports }" \
+				"$qid" "$classid" "$override" || return 1
+		else
+			nft_traffic_emit "$sel $scope" "meta l4proto $p" \
+				"$qid" "$classid" "$override" || return 1
+		fi
+	done
+
+	# The marking a phone or a console writes itself, which is the only handle
+	# left when a service moves to a port nobody published.
+	[ -n "$dscp" ] || return 0
+
+	for fam in ip ip6; do
+		# A rule scoped to IPv4 addresses cannot also carry an IPv6 match: the
+		# two would never be true at once and nftables would take the rule
+		# without ever firing it.
+		case "$scope" in
+			"") ;;
+			"$fam "*) ;;
+			*) continue ;;
+		esac
+
+		nft_traffic_emit "$sel $scope" "$fam dscp $dscp" "$qid" "$classid" \
+			"$override" || return 1
+	done
+}
+
+# Same class as program_tc_queue builds, without the address filters: a service
+# rule is classified by skb->priority instead, so it needs no filter at all.
+program_tc_class() {
+	local dev="$1"
+	local classid="$2"
+	local rate="$3"
+	local min_rate="$4"
+	local weight="$5"
+
+	load_tunables
+	[ "$rate" -gt 0 ] || return 0
+
+	is_uinteger "$min_rate" && [ "$min_rate" -ge 1 ] && [ "$min_rate" -le "$rate" ] ||
+		min_rate="$TC_MIN_FLOOR"
+	[ "$min_rate" -le "$rate" ] || min_rate="$rate"
+
+	tc class replace dev "$dev" parent 1:1 classid "1:$classid" \
+		htb rate "${min_rate}kbit" ceil "${rate}kbit" \
+		prio "$(htb_prio "$weight")" quantum "$(htb_quantum "$weight")" \
+		burst "$(htb_burst "$rate")" cburst "$(htb_burst "$rate")" ||
+		return 1
+	attach_aqm "$dev" "$classid"
+}
+
+add_traffic_rule() {
+	local slot="$1"
+	local dl="$2"
+	local up="$3"
+	local min_dl="$4"
+	local min_up="$5"
+	local weight="$6"
+	local proto="$7"
+	local ports="$8"
+	local dscp="$9"
+	local total_dl="${10}"
+	local total_up="${11}"
+	local override="${12}"
+	local addrs="${13}"
+	local dev="$DEV_DEFAULT"
+	local up_qid dl_qid classid a v4="" v6=""
+
+	is_uinteger "$slot" || die "queue slot must be an integer"
+	is_uinteger "$dl" || die "download rate must be an integer"
+	is_uinteger "$up" || die "upload rate must be an integer"
+	is_uinteger "$total_dl" || total_dl=0
+	is_uinteger "$total_up" || total_up=0
+
+	[ "$slot" -ge 1 ] && [ "$slot" -le "$QUEUE_SLOTS" ] ||
+		die "a service rule needs a hardware queue, slots 1 to $QUEUE_SLOTS"
+	[ "$dl" -le "$QDMA_RATE_MAX" ] && [ "$up" -le "$QDMA_RATE_MAX" ] ||
+		die "service rate must not exceed $QDMA_RATE_MAX kbit/s"
+	[ -n "$proto$dscp" ] ||
+		die "a service rule needs a protocol or a DSCP value to match on"
+
+	for a in $addrs; do
+		if valid_ipv4 "$a"; then
+			v4="${v4:+$v4 }$a"
+		elif valid_ipv6 "$a"; then
+			v6="${v6:+$v6 }$a"
+		else
+			die "invalid address in the rule scope: $a"
+		fi
+	done
 
 	need_nft
 	need_qdma_layout
 
-	if [ "$slot" -gt "$QUEUE_SLOTS" ]; then
-		ensure_tc_qos "$dev" "$total_dl" "$total_up" || return 1
-		program_tc_queue up "$slot" "$up" "$ip4" "$ip6" "$dev" || return 1
-		program_tc_queue dl "$slot" "$dl" "$ip4" "$ip6" "$dev" || return 1
-
-		if [ "$up" -ne 0 ]; then
-			nft_exception_rule up ip "$ip4" || return 1
-			nft_exception_rule up ip6 "$ip6" || return 1
-		fi
-
-		if [ "$dl" -ne 0 ]; then
-			nft_exception_rule dl ip "$ip4" || return 1
-			nft_exception_rule dl ip6 "$ip6" || return 1
-		fi
-
-		return 0
-	fi
-
 	up_qid="$(queue_from_slot "$slot" up)"
 	dl_qid="$(queue_from_slot "$slot" dl)"
+	classid="$(tc_classid_from_slot "$slot")"
 
-	program_queue "$up_qid" "$UP_SCH" "$up" || return 1
-	program_queue "$dl_qid" "$DL_SCH" "$dl" || return 1
+	program_queue "$dl_qid" "$DL_SCH" "$dl" "$min_dl" "$weight" || return 1
+	program_queue "$up_qid" "$UP_SCH" "$up" "$min_up" "$weight" || return 1
 
-	if [ "$up" -ne 0 ]; then
-		nft_mark_rule up ip "$ip4" "$up_qid" || return 1
-		nft_mark_rule up ip6 "$ip6" "$up_qid" || return 1
+	# The software class exists whatever the hardware does, because the flows
+	# that need sorting most are the ones already kept off the accelerator.
+	if [ "$total_dl" -gt 0 ] && [ "$total_up" -gt 0 ]; then
+		ensure_tc_qos "$dev" "$total_dl" "$total_up" || return 1
+		program_tc_class "$dev" "$classid" \
+			"$([ "$dl" -ne 0 ] && echo "$dl" || echo $((total_dl * 1000)))" \
+			"$min_dl" "$weight" || return 1
+		program_tc_class "$IFB_DEV" "$classid" \
+			"$([ "$up" -ne 0 ] && echo "$up" || echo $((total_up * 1000)))" \
+			"$min_up" "$weight" || return 1
+		tc_traffic_filters "$proto" "$ports" "$dscp" "$slot" "$classid" \
+			"$override" "$v4" || return 1
 	fi
 
-	if [ "$dl" -ne 0 ]; then
-		nft_mark_rule dl ip "$ip4" "$dl_qid" || return 1
-		nft_mark_rule dl ip6 "$ip6" "$dl_qid" || return 1
+	nft_traffic_rule dl "$proto" "$ports" "$dscp" "$dl_qid" "$classid" \
+		"$override" "$v4" "$v6" || return 1
+	nft_traffic_rule up "$proto" "$ports" "$dscp" "$up_qid" "$classid" \
+		"$override" "$v4" "$v6" || return 1
+}
+
+# A host is not one address. It has an IPv4 lease and, the moment the line
+# carries IPv6, one or more addresses of its own, and a rule written against the
+# lease covers none of them: the other half of its traffic walks past the rule
+# into the catch-all and escapes the limit. The queue is already programmed by
+# the time this runs, so only the classification is added, and it has to follow
+# the same branch add_rule took or the packet lands in the wrong place.
+# Which packets belong to a queue. Shared by add_rule, which programs the queue
+# first, and by add-addr, which puts another address of the same host on a
+# queue that is already there: the two have to make the same choice or the
+# second address lands somewhere the first one is not.
+classify_address() {
+	local slot="$1"
+	local ip4="$2"
+	local ip6="$3"
+	local up_soft="$4"
+	local dl_soft="$5"
+	local dev="$DEV_DEFAULT"
+	local classid pref pref6 qid
+
+	classid="$(tc_classid_from_slot "$slot")"
+	pref="$(tc_pref $((TC_DEVICE_PREF_BASE + slot)))"
+	pref6="$(tc_pref $((TC_DEVICE_PREF_BASE6 + slot)))"
+
+	if [ "$dl_soft" = "1" ]; then
+		tc_filter_rule dl ip "$ip4" "$pref" "$classid" "$dev" || return 1
+		tc_filter_rule dl ip6 "$ip6" "$pref6" "$classid" "$dev" || return 1
+		nft_exception_rule dl ip "$ip4" || return 1
+		nft_exception_rule dl ip6 "$ip6" || return 1
+	else
+		qid="$(queue_from_slot "$slot" dl)"
+		nft_mark_rule dl ip "$ip4" "$qid" || return 1
+		nft_mark_rule dl ip6 "$ip6" "$qid" || return 1
 	fi
 
+	if [ "$up_soft" = "1" ]; then
+		tc_filter_rule up ip "$ip4" "$pref" "$classid" "$dev" || return 1
+		tc_filter_rule up ip6 "$ip6" "$pref6" "$classid" "$dev" || return 1
+		nft_exception_rule up ip "$ip4" || return 1
+		nft_exception_rule up ip6 "$ip6" || return 1
+	else
+		qid="$(queue_from_slot "$slot" up)"
+		nft_mark_rule up ip "$ip4" "$qid" || return 1
+		nft_mark_rule up ip6 "$ip6" "$qid" || return 1
+	fi
+}
+
+# A host is not one address. It has an IPv4 lease and, the moment the line
+# carries IPv6, one or more addresses of its own, and a rule written against
+# the lease covers none of them: the other half of its traffic walks past the
+# rule into the catch-all and escapes the limit.
+add_extra_address() {
+	local slot="$1"
+	local addr="$2"
+	local up_soft="$3"
+	local dl_soft="$4"
+	local ip4="" ip6=""
+
+	is_uinteger "$slot" || die "queue slot must be an integer"
+
+	if valid_ipv4 "$addr"; then
+		ip4="$addr"
+	elif valid_ipv6 "$addr"; then
+		ip6="$addr"
+	else
+		die "selector must be an IPv4 or IPv6 address"
+	fi
+
+	need_nft
+
+	[ "$slot" -le "$QUEUE_SLOTS" ] || { up_soft=1; dl_soft=1; }
+
+	classify_address "$slot" "$ip4" "$ip6" "$up_soft" "$dl_soft"
 }
 
 add_inferred_rule() {
@@ -500,6 +1406,11 @@ add_inferred_rule() {
 	local selector="$4"
 	local total_dl="$5"
 	local total_up="$6"
+	local min_dl="$7"
+	local min_up="$8"
+	local weight="$9"
+	local up_soft="${10}"
+	local dl_soft="${11}"
 	local ip4 ip6
 
 	[ -n "$selector" ] || die "selector is required"
@@ -512,12 +1423,15 @@ add_inferred_rule() {
 		die "selector must be an IPv4 or IPv6 address"
 	fi
 
-	add_rule "$slot" "$dl" "$up" "$ip4" "$ip6" "$total_dl" "$total_up"
+	add_rule "$slot" "$dl" "$up" "$ip4" "$ip6" "$total_dl" "$total_up" \
+		"$min_dl" "$min_up" "$weight" "$up_soft" "$dl_soft"
 }
 
 start_all() {
 	local dl="$1"
 	local up="$2"
+	local direction="$3"
+	local sched="$4"
 	local dev="$DEV_DEFAULT"
 
 	is_uinteger "$dl" || die "download rate must be an integer"
@@ -530,7 +1444,7 @@ start_all() {
 	need_qdma_layout
 	stop_qos "$dev"
 	nft_stop
-	start_hnat_qos "$dl" "$up"
+	start_hnat_qos "$dl" "$up" "$direction" "$sched"
 	nft_start "$dev" || die "failed to configure nftables"
 }
 
@@ -538,6 +1452,7 @@ stop_all() {
 	local dev="$DEV_DEFAULT"
 
 	stop_qos "$dev"
+	wan_stop
 	nft_stop
 	stop_hnat_qos
 }
@@ -547,17 +1462,51 @@ usage() {
 Usage: $0 <command> [options]
 
 Commands:
-  start <download_mbit> <upload_mbit>
-  add <slot> <download_kbit> <upload_kbit> <ipv4|ipv6> [total_down_mbit] [total_up_mbit]
-  enable
+  start <download_mbit> <upload_mbit> [direction] [scheduler]
+  add <slot> <download_kbit> <upload_kbit> <ipv4|ipv6> [total_down_mbit]
+      [total_up_mbit] [min_down_kbit] [min_up_kbit] [weight] [upload_soft]
+      [download_soft]
+  add-addr <slot> <ipv4|ipv6> [upload_soft] [download_soft]
+  add-traffic <slot> <download_kbit> <upload_kbit> [min_down_kbit]
+      [min_up_kbit] [weight] [protocols] [ports] [dscp] [total_down_mbit]
+      [total_up_mbit] [override] [addresses]
+  enable [bind_rate]
+  wan-start <device> <upload_mbit>
+  wan-stop
   stop
+
+direction is both, uplink or downlink; scheduler is wrr or sp. The min rates
+are the bandwidth guaranteed to a queue and weight (1-15) its WRR share when
+the scheduler is congested. bind_rate is the HNAT binding threshold in
+packets, 1-30.
+
+add-traffic sorts by what a flow carries rather than by who sends it.
+protocols is tcp, udp or both separated by a space, ports is an nftables set
+body such as 5060,10000-20000 and dscp is a class name such as ef or a number.
+A service rule always takes a hardware queue, and it must be added after the
+device rules so that its mark is the one that survives. Pass 1 as override to
+let it claim traffic that a device rule already holds: that traffic then leaves
+the limit of its device, so a rule with no ceiling of its own ends up with none
+at all. Without it the rule only picks up what no device rule matched.
+
+add-addr puts a second address of the same host on a queue that add has
+already programmed, which is how one rule covers both the IPv4 lease of a
+device and its IPv6 addresses.
 
 Run enable once after all add commands.
 
-Queue slots 1-31 use the common NETSYS V2/V3 64-QDMA layout. EQoS keeps
-qid0 as the default unclassified queue, uses qid1-31 for upload and
-qid32-62 for download, and keeps qid63 free for the PPD path. Slots 32
-and above use tc software shaping with an IPv4 or IPv6 selector.
+The wan-* commands cap the total upload on the WAN device itself, for a WAN
+the PPE cannot put through the QDMA scheduler. Per-device upload cannot be
+enforced there - the packets are already SNATed and HNAT does not restore the
+firewall mark on an accelerated flow - so pass 1 as the last argument to add
+and the rate is shaped on the LAN ingress, keyed on the source address.
+
+Queue slots 1-30 use the common NETSYS V2/V3 64-QDMA layout. EQoS keeps
+qid0 as the default unclassified queue, uses qid1-30 for upload and
+qid32-61 for download, reserves qid31 and qid62 for the global catch-all
+queues that enforce the total upload and download rates, and keeps qid63
+free for the PPD path. Slots 31 and above use tc software shaping with an
+IPv4 or IPv6 selector.
 EOF
 }
 
@@ -574,9 +1523,25 @@ case "$1" in
 		shift
 		add_inferred_rule "$@"
 		;;
+	add-addr)
+		shift
+		add_extra_address "$@"
+		;;
+	add-traffic)
+		shift
+		add_traffic_rule "$@"
+		;;
 	enable)
 		shift
 		enable_hnat "$@"
+		;;
+	wan-start)
+		shift
+		wan_start "$@"
+		;;
+	wan-stop)
+		shift
+		wan_stop "$@"
 		;;
 	*)
 		usage

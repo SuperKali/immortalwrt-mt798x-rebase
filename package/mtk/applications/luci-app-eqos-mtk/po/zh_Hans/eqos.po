@@ -8,32 +8,542 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
 
+msgid "%d devices"
+msgstr "%d 台设备"
+
+msgid "%d dropped"
+msgstr "丢弃 %d 个"
+
+msgid "%d in software"
+msgstr "%d 个走软件限速"
+
+msgid "%s down"
+msgstr "下行 %s"
+
+msgid "%s matches no rule"
+msgstr "%s 未匹配任何规则"
+
+msgid "%s up"
+msgstr "上行 %s"
+
+msgid "A hardware queue only limits what leaves through the wired ports, so on a bridge with a radio it misses the Wi-Fi clients. Automatic moves download shaping to software when it finds a radio, which costs the hardware offload for the devices that have a rule."
+msgstr "硬件队列只能限制从有线端口发出的流量，因此在带有无线电的桥接上会漏掉 Wi-Fi 客户端。自动模式发现无线电时把下载限速改为软件实现，代价是已配置规则的设备失去硬件卸载。"
+
+msgid "A profile sets the rates for every device that uses it, replacing what the device rule says. Share it and all members sit on one queue, splitting the bandwidth between them. Leave it unshared and each member gets the full rates."
+msgstr "配置文件为所有使用它的设备设定速率，覆盖设备规则中的取值。开启共享后全部成员共用一个队列，彼此分摊带宽；不共享时每个成员各自获得完整速率。"
+
+msgid "AF41, interactive video"
+msgstr "AF41，交互式视频"
+
+msgid "Active"
+msgstr "运行中"
+
+msgid "Active from"
+msgstr "运行中"
+
+msgid "Active until"
+msgstr "运行中"
+
+msgid "Add a profile from a preset:"
+msgstr "从预设创建配置档："
+
+msgid "Add a rule from a preset:"
+msgstr "从预设添加规则："
+
+msgid "Add profile"
+msgstr "添加配置档"
+
+msgid "Add rule"
+msgstr "添加规则"
+
+msgid "Advanced"
+msgstr "高级"
+
+msgid "All members sit on one queue and split the rates below, instead of each getting them in full."
+msgstr "所有成员共用一个队列并分摊下面的速率，而不是各自获得完整速率。"
+
+msgid "Automatic"
+msgstr "自动"
+
+msgid "Both directions"
+msgstr "双向"
+
+msgid "CS1, background"
+msgstr "CS1，后台"
+
+msgid "CS6, network control"
+msgstr "CS6，网络控制"
+
+msgid "Cameras"
+msgstr "摄像头"
+
+msgid "Critical"
+msgstr "最高"
+
+msgid "DNS"
+msgstr "DNS"
+
+msgid "Days"
+msgstr "星期"
+
+msgid "Decides both the scheduling weight and which queue the profile gets, so it counts under either scheduling mode."
+msgstr "同时决定调度权重和配置文件分配到的队列，因此在两种调度模式下都有效。"
+
+msgid "Device"
+msgstr "设备"
+
 msgid "Device rules"
 msgstr "设备规则"
+
+msgid "Devices"
+msgstr "设备"
+
+msgid "Disabled"
+msgstr "已停用"
+
+msgid "Display name"
+msgstr "显示名称"
+
+msgid "Download"
+msgstr "下载"
+
+msgid "Download now"
+msgstr "当前下载"
+
+msgid "Download only"
+msgstr "仅下载"
+
+msgid "Download shaping"
+msgstr "下载限速方式"
+
+msgid "Downloads"
+msgstr "下载"
+
+msgid "EF, voice"
+msgstr "EF，语音"
 
 msgid "EQoS"
 msgstr "网速控制"
 
+msgid "EQoS is disabled, nothing below is being enforced."
+msgstr "EQoS 已停用，下面的设置均未生效。"
+
+msgid "Enable"
+msgstr "启用"
+
+msgid "File sharing"
+msgstr "文件共享"
+
+msgid "Floor for queues with no guarantee"
+msgstr "无保障队列的最低速率"
+
+msgid "Friday"
+msgstr "星期五"
+
+msgid "Game consoles"
+msgstr "游戏主机"
+
+msgid "Gaming"
+msgstr "游戏"
+
+msgid "General Settings"
+msgstr "基本设置"
+
 msgid "Grant UCI access for luci-app-eqos"
 msgstr "授予 luci-app-eqos 访问 UCI 配置的权限"
 
-msgid "Maximum rate in Mbit/s. Use 0 for no limit."
-msgstr "最大速率，单位为 Mbit/s；填 0 表示不限制该方向。"
+msgid "Guaranteed download"
+msgstr "保障下载带宽"
+
+msgid "Guaranteed upload"
+msgstr "保障上传带宽"
+
+msgid "Guests"
+msgstr "访客"
+
+msgid "HNAT binding threshold"
+msgstr "HNAT 绑定阈值"
+
+msgid "HQoS direction"
+msgstr "HQoS 方向"
+
+msgid "Hardware queues"
+msgstr "硬件队列"
+
+msgid "High"
+msgstr "高"
+
+msgid "How many packets a flow has to carry before the accelerator takes it over. The service writes the same value to the turboacc configuration."
+msgstr "一条流需要传输多少个数据包后才由加速引擎接管。服务会把同一取值写入 turboacc 配置。"
+
+msgid "How the four priority levels split the line under weighted round robin. What counts is the distance between them: at 15 against 1, a critical queue gets fifteen times the share of a low one when both want more than there is. Strict priority ignores these."
+msgstr "加权轮询模式下四个优先级如何瓜分带宽。真正起作用的是它们之间的差距：15 比 1 时，当两者都想要更多带宽，关键队列得到的份额是低优先级队列的十五倍。严格优先级模式忽略这些数值。"
+
+msgid "IPv4 address"
+msgstr "MAC 地址"
+
+msgid "IPv6 address"
+msgstr "MAC 地址"
+
+msgid "IoT"
+msgstr "物联网"
+
+msgid "Keeps this profile on a fixed queue instead of letting the service choose. Use 1 to %d for a hardware queue, or %d and above for software shaping. The numbers in between belong to the queues that carry everything else."
+msgstr "把此配置文件固定在指定队列，而不是由服务自行选择。1 到 %d 为硬件队列，%d 及以上走软件限速。中间的数字属于承载其余流量的队列。"
+
+msgid "Keeps this rule on a fixed queue instead of letting the service choose. A service rule always needs a hardware queue, so the value has to be %d or below."
+msgstr "把此规则固定在指定队列，而不是由服务自行选择。1 到 %d 为硬件队列，%d 及以上走软件限速。中间的数字属于承载其余流量的队列。"
+
+msgid "Keeps this rule on a fixed queue instead of letting the service choose. Use 1 to %d for a hardware queue, or %d and above for software shaping. The numbers in between belong to the queues that carry everything else."
+msgstr "把此规则固定在指定队列，而不是由服务自行选择。1 到 %d 为硬件队列，%d 及以上走软件限速。中间的数字属于承载其余流量的队列。"
+
+msgid "Leave both times empty and the rule is always on. A window that ends before it starts runs through the night, so 22:00 to 07:00 is one stretch and not two."
+msgstr "两个时间都留空则规则始终生效。结束时间早于开始时间表示跨越午夜，因此 22:00 到 07:00 是连续的一段，而不是两段。"
+
+msgid "Leave it empty and the rule watches the whole network. Fill it in and it only applies to the devices listed, which is how one phone gets its calls sorted without doing the same for everybody."
+msgstr "留空则规则作用于整个网络。填写后只对列出的设备生效，这样可以只为某一部手机的通话排队，而不影响其他设备。"
+
+msgid "Leave it empty for every day."
+msgstr "留空表示每天。"
+
+msgid "Leave it empty to use the device of the wan interface."
+msgstr "留空则使用 wan 接口对应的设备。"
+
+msgid "Limits are being enforced and the accelerator is running."
+msgstr "限制已生效，加速引擎正在运行。"
+
+msgid "Limits are being enforced in software only, the accelerator is not running."
+msgstr "限制仅由软件执行，加速引擎未运行。"
+
+msgid "Limits the line as a whole, and each device on its own. The per-device limits run in software, so they work for Wi-Fi clients as well. Traffic that no rule matches goes to the hardware queues."
+msgstr "既限制整条线路，也单独限制每台设备。按设备的限速由软件实现，因此对 Wi-Fi 客户端同样有效。未匹配任何规则的流量走硬件队列。"
+
+msgid "Low"
+msgstr "低"
+
+msgid "MAC address"
+msgstr "MAC 地址"
+
+msgid "MAC or IP address"
+msgstr "MAC 或 IP 地址"
+
+msgid "Marking"
+msgstr "标记"
+
+msgid "Match"
+msgstr "匹配方式"
+
+msgid "Matches"
+msgstr "匹配"
+
+msgid "Monday"
+msgstr "星期一"
 
 msgid "Network speed control service for MediaTek HNAT."
 msgstr "面向 MediaTek HNAT 的网速控制服务。"
 
+msgid "No acceleration"
+msgstr "未启用加速"
+
+msgid "No device rule is active."
+msgstr "没有生效的设备规则。"
+
+msgid "No limits"
+msgstr "不限速"
+
+msgid "No service rule is active."
+msgstr "没有生效的服务规则。"
+
+msgid "Normal"
+msgstr "普通"
+
+msgid "Off, the rule only picks up traffic that no device rule matched. On, it also takes traffic from devices that have a limit, and that traffic leaves their limit behind: give the rule a ceiling of its own or it ends up with none."
+msgstr "关闭时，规则只接管没有被任何设备规则匹配的流量。开启时，它也会接管已有限速设备的流量，而这部分流量将脱离该设备的限速：请给规则设置自己的上限，否则它就完全不受限制了。"
+
+msgid "Only numbers, hyphens and commas."
+msgstr "只能填数字、连字符和逗号。"
+
+msgid "Only these devices"
+msgstr "仅这些设备"
+
+msgid "Override device limits"
+msgstr "覆盖设备限速"
+
+msgid "Packets the queue had to throw away because it was full."
+msgstr "队列已满而不得不丢弃的数据包。"
+
+msgid "Ports"
+msgstr "端口"
+
+msgid "Priority"
+msgstr "优先级"
+
+msgid "Profile"
+msgstr "配置档"
+
+msgid "Profiles"
+msgstr "配置档"
+
+msgid "Protocol"
+msgstr "协议"
+
 msgid "Queue ID"
 msgstr "队列编号"
 
-msgid "This value is already in use."
-msgstr "该值已被使用。"
+msgid "Queue discipline"
+msgstr "已用队列"
 
-msgid "Total download bandwidth."
-msgstr "总下载带宽。"
+msgid "Queues in use"
+msgstr "已用队列"
 
-msgid "Total upload bandwidth."
-msgstr "总上传带宽。"
+msgid "Remote desktop"
+msgstr "远程桌面"
 
-msgid "Values 1-31 use HNAT HQoS. Values 32 and above use software shaping."
-msgstr "编号 1-31 使用 HNAT HQoS；编号 32 及以上使用软件限速。"
+msgid "Replaces the section name when you pick the profile."
+msgstr "选择配置文件时用它代替配置节名称显示。"
+
+msgid "Replaces the weight that comes with the priority level, from 1 to %d. Strict priority ignores it."
+msgstr "覆盖优先级自带的权重，取值 1 到 %d。严格优先级模式忽略此项。"
+
+msgid "Saturday"
+msgstr "星期六"
+
+msgid "Schedule"
+msgstr "调度算法"
+
+msgid "Scheduling"
+msgstr "调度算法"
+
+msgid "Service"
+msgstr "服务"
+
+msgid "Service rules"
+msgstr "服务规则"
+
+msgid "Settings"
+msgstr "设置"
+
+msgid "Share bandwidth"
+msgstr "共享带宽"
+
+msgid "Software on the LAN bridge"
+msgstr "LAN 网桥上的软件限速"
+
+msgid "Software on the WAN device"
+msgstr "WAN 设备上的软件限速"
+
+msgid "Sorts traffic by what it carries instead of by who sends it, so a call keeps its place in the queue whichever device places it. By default they only pick up traffic that no device rule matched, so the per-device limits stay intact. A rule can be told to take precedence, and then that traffic leaves the limit of its device."
+msgstr "按流量本身的内容分类，而不是按发送它的设备，因此无论用哪台设备拨打，通话都能保住自己的队列位置。默认情况下规则只接管没有被任何设备规则匹配的流量，因此按设备的限速保持不变。也可以让某条规则优先，届时那部分流量将脱离所属设备的限速。"
+
+msgid "Speed in Mbit/s the scheduler keeps for this queue. Leave it at 0 to set only a ceiling."
+msgstr "调度器为此队列保留的速率，单位 Mbit/s。保持 0 表示只设上限。"
+
+msgid "Speed in kbit/s a queue keeps when it asked for no guarantee and everything else is busy. Raise it to stop low priority devices from being squeezed to nothing, lower it to give the high priority ones more room."
+msgstr "队列未申请保障且其他队列繁忙时仍能保留的速率，单位 kbit/s。调高可避免低优先级设备被压到几乎为零，调低则给高优先级设备更多空间。"
+
+msgid "Status"
+msgstr "状态"
+
+msgid "Streaming"
+msgstr "流媒体"
+
+msgid "Strict priority"
+msgstr "严格优先级"
+
+msgid "Sunday"
+msgstr "星期日"
+
+msgid "TCP"
+msgstr "TCP"
+
+msgid "TCP and UDP"
+msgstr "TCP 和 UDP"
+
+msgid "The class the device writes into its own packets, which is the only handle left when a service moves to a port nobody published. Phones and softphones usually mark voice as EF."
+msgstr "设备自己写入数据包的类别。当服务换到未公布的端口时，这是唯一可用的判据。话机和软电话通常把语音标记为 EF。"
+
+msgid "The devices that take this profile. Adding one here creates its rule for you, removing one deletes that rule."
+msgstr "使用此配置文件的设备。在这里添加会自动创建对应的规则，移除则删除该规则。"
+
+msgid "The hardware queues can shape upload only when the traffic reaches the QDMA scheduler, and that never happens on an external WAN device. Automatic switches to software shaping when it finds one."
+msgstr "只有当流量到达 QDMA 调度器时硬件队列才能限制上传，而外接 WAN 设备上永远不会发生。自动模式遇到这种情况时改用软件限速。"
+
+msgid "The ports the service listens on, separated by commas. A range is written with a hyphen, as in 10000-20000. Leave it empty to take the whole protocol."
+msgstr "服务监听的端口，用逗号分隔。区间用连字符书写，例如 10000-20000。留空则匹配整个协议。"
+
+msgid "The rule follows the device when its address changes, because a new DHCP lease reloads it."
+msgstr "设备地址变化时规则会跟随，因为新的 DHCP 租约会重新加载规则。"
+
+msgid "The service assigns the queues itself, starting from the highest priority. When no hardware queue is left, the rule falls back to software shaping."
+msgstr "服务自行分配队列，从最高优先级开始。硬件队列用完后，规则退回软件限速。"
+
+msgid "The service is off and no limit is being enforced."
+msgstr "服务已关闭，没有任何限制生效。"
+
+msgid "Thursday"
+msgstr "星期四"
+
+msgid "Top speed in Mbit/s. Use 0 to leave it unlimited."
+msgstr "最高速率，单位 Mbit/s。填 0 表示不限制。"
+
+msgid "Total download speed of the line. Set it a little below what the line really delivers, around 95%, or the scheduler never becomes the bottleneck and priorities have nothing to arbitrate. Traffic that no device rule matches gets this as its limit."
+msgstr "线路的下载总速率。请设成略低于线路实际能跑到的速度，大约 95%，否则调度器永远不会成为瓶颈，优先级也就无从仲裁。未匹配任何设备规则的流量以此为上限。"
+
+msgid "Total upload speed of the line. Set it a little below what the line really delivers, around 95%, or the scheduler never becomes the bottleneck and priorities have nothing to arbitrate. Traffic that no device rule matches gets this as its limit."
+msgstr "线路的上传总速率。请设成略低于线路实际能跑到的速度，大约 95%，否则调度器永远不会成为瓶颈，优先级也就无从仲裁。未匹配任何设备规则的流量以此为上限。"
+
+msgid "Traffic"
+msgstr "流量"
+
+msgid "Traffic by device"
+msgstr "按设备的流量"
+
+msgid "Traffic by service"
+msgstr "按服务的流量"
+
+msgid "Tuesday"
+msgstr "星期二"
+
+msgid "UDP"
+msgstr "UDP"
+
+msgid "Upload"
+msgstr "当前上传"
+
+msgid "Upload now"
+msgstr "当前上传"
+
+msgid "Upload only"
+msgstr "仅上传"
+
+msgid "Upload shaping"
+msgstr "上传限速方式"
+
+msgid "Upload shaping in hardware starts only when the WAN device name begins with the one the accelerator knows about, so it never runs when the WAN is an external device."
+msgstr "只有当 WAN 设备名以加速引擎已知的名称开头时，硬件上传限速才会生效，因此 WAN 是外接设备时它永远不会启动。"
+
+msgid "Use the rates and the priority of a profile instead of setting them here."
+msgstr "使用某个配置文件的速率和优先级，而不是在这里单独设置。"
+
+msgid "Use the rates and the priority of a profile instead of setting them here. The rule still gets a queue of its own, since it is not a device."
+msgstr "使用某个配置文件的速率和优先级，而不是在这里单独设置。规则仍会分到自己的队列，因为它不是一台设备。"
+
+msgid "Video calls"
+msgstr "视频通话"
+
+msgid "Video meetings"
+msgstr "视频会议"
+
+msgid "VoIP"
+msgstr "VoIP"
+
+msgid "Voice calls"
+msgstr "语音通话"
+
+msgid "WAN device"
+msgstr "WAN 设备"
+
+msgid "Wednesday"
+msgstr "星期三"
+
+msgid "Weight"
+msgstr "权重"
+
+msgid "Weight of critical"
+msgstr "关键的权重"
+
+msgid "Weight of high"
+msgstr "权重"
+
+msgid "Weight of low"
+msgstr "权重"
+
+msgid "Weight of normal"
+msgstr "普通的权重"
+
+msgid "Weighted round robin"
+msgstr "加权轮询"
+
+msgid "Weighted round robin splits the line between the queues by weight. Strict priority always serves the highest queue first."
+msgstr "加权轮询按权重在各队列之间分配线路。严格优先级总是先服务最高的队列。"
+
+msgid "What sits at the bottom of each queue. It does not change the rates, it decides how long a packet waits once a queue starts to fill. Automatic takes cake where the kernel has it and falls back to fq_codel."
+msgstr "每个队列底部使用的算法。它不改变速率，只决定队列开始堆积后数据包要等多久。自动模式在内核提供 cake 时使用 cake，否则回退到 fq_codel。"
+
+msgid "Whichever address you pick, the rule also covers the other addresses of the same host, so a device limited through its IPv4 lease is limited over IPv6 as well."
+msgstr "无论选择哪个地址，规则同样覆盖同一主机的其他地址，因此通过 IPv4 租约限速的设备在 IPv6 上也一样受限。"
+
+msgid "Work"
+msgstr "办公"
+
+msgid "Write the time as HH:MM."
+msgstr "时间请写成 HH:MM 格式。"
+
+msgid "automatic"
+msgstr "自动"
+
+msgid "cake"
+msgstr "cake"
+
+msgid "fq_codel"
+msgstr "fq_codel"
+
+msgid "from priority"
+msgstr "按优先级"
+
+msgid "hardware queues"
+msgstr "硬件队列"
+
+msgid "keeps %s"
+msgstr "保底 %s"
+
+msgid "limits to %s"
+msgstr "限速 %s"
+
+msgid "marked %s"
+msgstr "标记为 %s"
+
+msgid "max %s"
+msgstr "上限 %s"
+
+msgid "members split one queue"
+msgstr "成员共用一个队列"
+
+msgid "min %s"
+msgstr "保障 %s"
+
+msgid "no ceiling, so it can use the whole line"
+msgstr "不设上限，可用满整条线路"
+
+msgid "no device yet"
+msgstr "尚无设备"
+
+msgid "no limit"
+msgstr "不限速"
+
+msgid "no limit of its own, and served before everything else"
+msgstr "自身不设限制，并优先于其他所有流量"
+
+msgid "none"
+msgstr "无"
+
+msgid "not placed"
+msgstr "未分配队列"
+
+msgid "nothing yet"
+msgstr "尚未设置"
+
+msgid "of %s"
+msgstr "总计 %s"
+
+msgid "served last, so it yields to everything else"
+msgstr "最后调度，让行于其他所有流量"
+
+msgid "shared with %d others"
+msgstr "与其他 %d 台设备共享"
+
+msgid "unlimited"
+msgstr "不限速"
+
+msgid "unspecified"
+msgstr "未指定"

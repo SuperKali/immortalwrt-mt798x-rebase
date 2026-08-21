@@ -3,9 +3,49 @@
 
 START=50
 USE_PROCD=1
+EXTRA_COMMANDS="refresh"
+EXTRA_HELP="	refresh Put the addresses a host has taken since the last start on its queue"
 
 QDMA_RATE_MAX=1000000
-TOTAL_RATE_MAX=1000
+TOTAL_RATE_MAX=10000
+HW_SLOT_MAX=30
+# A rule's slot is also the key the front end finds it by, and qids 31, 62 and
+# 63 already belong to the global queues and the PPD path. Starting the software
+# fallback at 31 put the 31st rule in the catch-all slot.
+SOFT_SLOT_BASE=64
+RESERVED_QID_FIRST=31
+RESERVED_QID_LAST=63
+SLOT_MAX=65535
+WEIGHT_MAX=15
+BIND_RATE_MAX=30
+HNAT_WAN_IF="/sys/kernel/debug/hnat/hnat_wan_if"
+LEASE_FILE="/tmp/dhcp.leases"
+# Queue slots are handed out here, so the front end has no way to work out
+# which rule ended up on which queue. Record it.
+MAP_FILE="/var/run/eqos.map"
+# Things the configuration got away with but should not have. Written here so
+# the front end can say them out loud: a warning that only reaches the system
+# log is a warning nobody reads.
+WARN_FILE="/var/run/eqos.warn"
+# Addresses already programmed per slot. SLAAC and privacy extensions hand out
+# new ones without a lease, so the periodic check adds what is missing here
+# instead of rebuilding every queue.
+# Which rules were due when the service last applied the configuration. The
+# periodic check compares it with what is due now and asks for a reload when a
+# window opens or closes.
+SCHED_FILE="/var/run/eqos.sched"
+V6_FILE="/var/run/eqos.v6"
+# An address that goes away leaves a filter that matches nothing. Past this
+# many, ask procd for a clean rebuild.
+V6_MAX=8
+REFRESH_INTERVAL_DEFAULT=60
+REFRESH_INTERVAL_MIN=10
+LAN_DEVICE_DEFAULT="br-lan"
+
+warn() {
+	echo "eqos: $1" >&2
+	printf '%s\n' "$1" >> "$WARN_FILE" 2>/dev/null
+}
 
 is_uinteger() {
 	case "$1" in
@@ -15,90 +55,691 @@ is_uinteger() {
 	return 0
 }
 
+# A priority level sets both the WRR weight and, through the slot allocator
+# below, the queue id. That covers both scheduling modes: weighted round robin
+# shares by weight, strict priority always serves the highest queue first.
+# How far apart the four levels sit. load_weights overrides these from the
+# configuration; the defaults give a critical queue fifteen times the share of
+# a low one under weighted round robin.
+priority_weight() {
+	case "$1" in
+		critical) echo "${WEIGHT_CRITICAL:-15}" ;;
+		high) echo "${WEIGHT_HIGH:-8}" ;;
+		low) echo "${WEIGHT_LOW:-1}" ;;
+		*) echo "${WEIGHT_NORMAL:-4}" ;;
+	esac
+}
+
+# A window written as HH:MM, and the days it applies to. Both empty means the
+# rule is always on. A window that ends before it starts crosses midnight.
+valid_clock() {
+	case "$1" in
+		[0-2][0-9]:[0-5][0-9]) ;;
+		*) return 1 ;;
+	esac
+
+	[ "${1%%:*}" -le 23 ]
+}
+
+clock_minutes() {
+	local h="${1%%:*}"
+	local m="${1##*:}"
+
+	echo $(( ${h#0} * 60 + ${m#0} ))
+}
+
+in_window() {
+	local start="$1"
+	local stop="$2"
+	local now="$3"
+
+	if [ "$start" -eq "$stop" ]; then
+		return 0
+	elif [ "$start" -lt "$stop" ]; then
+		[ "$now" -ge "$start" ] && [ "$now" -lt "$stop" ]
+	else
+		[ "$now" -ge "$start" ] || [ "$now" -lt "$stop" ]
+	fi
+}
+
+in_weekdays() {
+	local list="$1"
+	local today="$2"
+	local day
+
+	[ -n "$list" ] || return 0
+
+	for day in $list; do
+		[ "$(echo "$day" | tr 'A-Z' 'a-z')" = "$today" ] && return 0
+	done
+
+	return 1
+}
+
+# Whether a rule is due right now. An unreadable window is treated as always
+# on: dropping a limit because a field was mistyped is the wrong way to fail.
+rule_due() {
+	local cfg="$1"
+	local start stop weekdays
+
+	config_get start "$cfg" start
+	config_get stop "$cfg" stop
+	config_get weekdays "$cfg" weekdays
+
+	in_weekdays "$weekdays" "$(date +%a | tr 'A-Z' 'a-z')" || return 1
+
+	[ -n "$start" ] || [ -n "$stop" ] || return 0
+	valid_clock "$start" && valid_clock "$stop" || return 0
+
+	in_window "$(clock_minutes "$start")" "$(clock_minutes "$stop")" \
+		"$(clock_minutes "$(date +%H:%M)")"
+}
+
+load_weights() {
+	local level value
+
+	for level in critical high normal low; do
+		config_get value config "weight_$level"
+		is_uinteger "$value" || continue
+		[ "$value" -ge 1 ] && [ "$value" -le "$WEIGHT_MAX" ] || continue
+
+		case "$level" in
+			critical) WEIGHT_CRITICAL="$value" ;;
+			high) WEIGHT_HIGH="$value" ;;
+			normal) WEIGHT_NORMAL="$value" ;;
+			low) WEIGHT_LOW="$value" ;;
+		esac
+	done
+}
+
+priority_rank() {
+	case "$1" in
+		critical) echo 4 ;;
+		high) echo 3 ;;
+		low) echo 1 ;;
+		*) echo 2 ;;
+	esac
+}
+
+valid_priority() {
+	case "$1" in
+		critical|high|normal|low) return 0 ;;
+	esac
+
+	return 1
+}
+
+valid_mac() {
+	case "$1" in
+		[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F])
+			return 0 ;;
+	esac
+
+	return 1
+}
+
+# nftables matches on addresses, so a MAC rule is resolved to the address the
+# host currently holds. /etc/hotplug.d/dhcp/50-eqos reloads the service when a
+# lease changes so the rule follows the host around.
+# The MAC behind an address, so a rule written against the IPv4 lease can still
+# find the other addresses of the same host.
+ip_to_mac() {
+	local addr="$1"
+	local mac=""
+
+	[ -n "$addr" ] || return 1
+
+	if [ -f "$LEASE_FILE" ]; then
+		mac="$(awk -v a="$addr" '$3 == a { print $2 }' "$LEASE_FILE" 2>/dev/null |
+			tail -1)"
+	fi
+
+	if [ -z "$mac" ]; then
+		mac="$(ip neigh show 2>/dev/null |
+			awk -v a="$addr" '$1 == a { print $5 }' | tail -1)"
+	fi
+
+	[ -n "$mac" ] || return 1
+	echo "$mac" | tr 'A-Z' 'a-z'
+}
+
+# Every routable IPv6 address of a host. Link-local is left out on purpose: it
+# never leaves the segment, and the shaper already exempts it.
+host_ipv6() {
+	local mac="$1"
+
+	[ -n "$mac" ] || return 0
+	mac="$(echo "$mac" | tr 'A-Z' 'a-z')"
+
+	ip -6 neigh show 2>/dev/null | awk -v m="$mac" '
+		tolower($5) == m && $1 !~ /^fe80/ && $1 !~ /^ff/ { print $1 }' |
+		sort -u
+}
+
+mac_to_ip() {
+	local mac ip
+
+	mac="$(echo "$1" | tr 'A-Z' 'a-z')"
+	valid_mac "$mac" || return 1
+
+	if [ -f "$LEASE_FILE" ]; then
+		ip="$(awk -v m="$mac" '$2 == m { print $3 }' "$LEASE_FILE" 2>/dev/null | tail -1)"
+	fi
+
+	if [ -z "$ip" ]; then
+		ip="$(ip -4 neigh show 2>/dev/null |
+			awk -v m="$mac" 'tolower($5) == m && $1 !~ /:/ { print $1 }' | tail -1)"
+	fi
+
+	[ -n "$ip" ] || return 1
+	echo "$ip"
+}
+
+# Uplink HQoS only engages when the egress device name starts with hnat_wan_if,
+# and the PPE never puts traffic bound for an external device through the QDMA
+# scheduler. On such a WAN the upload rates have to be enforced by tc on the WAN
+# device instead of by the hardware queues.
+detect_wan_device() {
+	local override="$1"
+	local dev
+
+	if [ -n "$override" ]; then
+		echo "$override"
+		return 0
+	fi
+
+	dev="$(ubus call network.interface.wan status 2>/dev/null |
+		jsonfilter -e '@.l3_device' 2>/dev/null)"
+	[ -n "$dev" ] || dev="$(uci -q get network.wan.device)"
+	echo "$dev"
+}
+
+# A hardware download queue only carries what leaves through the wired path, so
+# on a bridge with a radio in it the cap simply does not apply to the clients
+# that need it most. Shape those in software instead.
+lan_wireless() {
+	local dev="$1"
+	local port
+
+	# mac80211 drivers expose phy80211, the MediaTek ones only the older
+	# wireless directory, so both have to be looked for.
+	for port in /sys/class/net/"$dev"/brif/*; do
+		[ -e "$port" ] || continue
+		port="${port##*/}"
+		if [ -e "/sys/class/net/$port/phy80211" ] ||
+		   [ -d "/sys/class/net/$port/wireless" ]; then
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+download_shaper_needed() {
+	local mode="$1"
+
+	case "$mode" in
+		software) return 0 ;;
+		hardware) return 1 ;;
+	esac
+
+	lan_wireless "$LAN_DEVICE"
+}
+
+wan_shaper_needed() {
+	local mode="$1"
+	local override="$2"
+	local hnat_wan dev
+
+	case "$mode" in
+		software) return 0 ;;
+		hardware) return 1 ;;
+	esac
+
+	hnat_wan="$(sed -n '1p' "$HNAT_WAN_IF" 2>/dev/null)"
+	[ -n "$hnat_wan" ] || return 1
+
+	dev="$(detect_wan_device "$override")"
+	[ -n "$dev" ] || return 1
+
+	case "$dev" in
+		"$hnat_wan"*) return 1 ;;
+		*) return 0 ;;
+	esac
+}
+
+# Queue slots are an implementation detail of the hardware, not something a
+# user should have to pick. Everything that needs a queue and has not been
+# pinned to one by hand gets one here: highest priority first, counting down
+# from the last hardware slot so that a higher priority also means a higher
+# queue id. Once the hardware queues run out the remaining rules fall back to
+# software shaping instead of failing.
+# 1 to 30 is a hardware queue, 64 and up is software shaping. What lies between
+# belongs to the global catch-all queues and to the PPD path.
+valid_queue_slot() {
+	local slot="$1"
+
+	is_uinteger "$slot" || return 1
+	[ "$slot" -ge 1 ] && [ "$slot" -le "$SLOT_MAX" ] || return 1
+	[ "$slot" -lt "$RESERVED_QID_FIRST" ] ||
+		[ "$slot" -gt "$RESERVED_QID_LAST" ] || return 1
+
+	return 0
+}
+
+slot_free() {
+	case "$RESERVED" in
+		*" $1 "*) return 1 ;;
+	esac
+
+	return 0
+}
+
+reserve_explicit_slot() {
+	local cfg="$1"
+	local queue
+
+	config_get queue "$cfg" queue
+	[ -n "$queue" ] || config_get queue "$cfg" comment
+	[ -n "$queue" ] || return 0
+	RESERVED="${RESERVED}${queue} "
+}
+
+collect_alloc_profile() {
+	local cfg="$1"
+	local shared queue priority
+
+	config_get_bool shared "$cfg" shared 0
+	[ "$shared" -eq 1 ] || return 0
+	config_get queue "$cfg" queue
+	[ -z "$queue" ] || return 0
+	config_get priority "$cfg" priority normal
+	ALLOC_LIST="${ALLOC_LIST}$(priority_rank "$priority") $cfg
+"
+}
+
+collect_alloc_device() {
+	local cfg="$1"
+	local enabled queue profile ptype shared priority
+
+	config_get_bool enabled "$cfg" enabled 1
+	[ "$enabled" -eq 1 ] || return 0
+
+	config_get queue "$cfg" queue
+	[ -n "$queue" ] || config_get queue "$cfg" comment
+	[ -z "$queue" ] || return 0
+
+	config_get profile "$cfg" profile
+	if [ -n "$profile" ]; then
+		config_get ptype "$profile" TYPE
+		if [ "$ptype" = "profile" ]; then
+			config_get_bool shared "$profile" shared 0
+			[ "$shared" -eq 1 ] && return 0
+			config_get priority "$profile" priority normal
+			ALLOC_LIST="${ALLOC_LIST}$(priority_rank "$priority") $cfg
+"
+			return 0
+		fi
+	fi
+
+	config_get priority "$cfg" priority normal
+	ALLOC_LIST="${ALLOC_LIST}$(priority_rank "$priority") $cfg
+"
+}
+
+# A service rule sorts by what a flow carries, so it is never a member of a
+# shared profile: it takes the rates of the profile it points at, and a queue
+# of its own.
+collect_alloc_traffic() {
+	local cfg="$1"
+	local enabled queue profile ptype priority
+
+	config_get_bool enabled "$cfg" enabled 1
+	[ "$enabled" -eq 1 ] || return 0
+
+	config_get queue "$cfg" queue
+	[ -z "$queue" ] || return 0
+
+	config_get profile "$cfg" profile
+	if [ -n "$profile" ]; then
+		config_get ptype "$profile" TYPE
+		[ "$ptype" != "profile" ] || config_get priority "$profile" priority
+	fi
+
+	[ -n "$priority" ] || config_get priority "$cfg" priority normal
+	ALLOC_LIST="${ALLOC_LIST}$(priority_rank "$priority") $cfg
+"
+}
+
+allocate_slots() {
+	local key hw soft
+
+	hw="$HW_SLOT_MAX"
+	soft="$SOFT_SLOT_BASE"
+	SOFT_FALLBACK=0
+
+	for key in $(printf '%s' "$ALLOC_LIST" | sort -nr | awk 'NF { print $2 }'); do
+		while [ "$hw" -ge 1 ] && ! slot_free "$hw"; do
+			hw=$((hw - 1))
+		done
+
+		if [ "$hw" -ge 1 ]; then
+			ASSIGNED="${ASSIGNED}${key}:${hw} "
+			RESERVED="${RESERVED}${hw} "
+			hw=$((hw - 1))
+			continue
+		fi
+
+		while [ "$soft" -lt "$SLOT_MAX" ] && ! slot_free "$soft"; do
+			soft=$((soft + 1))
+		done
+		ASSIGNED="${ASSIGNED}${key}:${soft} "
+		RESERVED="${RESERVED}${soft} "
+		SOFT_FALLBACK=$((SOFT_FALLBACK + 1))
+		soft=$((soft + 1))
+	done
+
+	[ "$SOFT_FALLBACK" -eq 0 ] ||
+		warn "$SOFT_FALLBACK rule(s) fell back to software shaping, the hardware only has $HW_SLOT_MAX queues"
+}
+
+lookup_slot() {
+	local key="$1"
+	local pair
+
+	for pair in $ASSIGNED; do
+		case "$pair" in
+			"$key":*)
+				echo "${pair#*:}"
+				return 0
+				;;
+		esac
+	done
+
+	return 1
+}
+
+collect_profile_queue() {
+	local cfg="$1"
+	local queue shared
+
+	config_get_bool shared "$cfg" shared 0
+	config_get queue "$cfg" queue
+	[ -n "$queue" ] || [ "$shared" -eq 1 ] || return 0
+	[ -n "$queue" ] || queue="$(lookup_slot "$cfg")"
+	[ -n "$queue" ] || return 0
+	PROFILE_QUEUES="${PROFILE_QUEUES}${queue}:${cfg} "
+}
+
+validate_rate_pair() {
+	local cfg="$1"
+	local rate="$2"
+	local min_rate="$3"
+	local label="$4"
+
+	if ! is_uinteger "$rate" || ! is_uinteger "$min_rate"; then
+		echo "eqos: $cfg $label rates must be integers" >&2
+		return 1
+	fi
+
+	if [ "$rate" -gt "$QDMA_RATE_MAX" ] || [ "$min_rate" -gt "$QDMA_RATE_MAX" ]; then
+		echo "eqos: $cfg $label rates must not exceed $QDMA_RATE_MAX kbit/s" >&2
+		return 1
+	fi
+
+	if [ "$min_rate" -gt 0 ] && [ "$rate" -gt 0 ] && [ "$min_rate" -gt "$rate" ]; then
+		echo "eqos: $cfg guaranteed $label rate exceeds its limit" >&2
+		return 1
+	fi
+
+	return 0
+}
+
+validate_profile() {
+	local cfg="$1"
+	local download upload min_download min_upload priority weight queue shared
+
+	config_get download "$cfg" download 0
+	config_get upload "$cfg" upload 0
+	config_get min_download "$cfg" min_download 0
+	config_get min_upload "$cfg" min_upload 0
+	config_get priority "$cfg" priority normal
+	config_get weight "$cfg" weight
+	config_get queue "$cfg" queue
+	config_get_bool shared "$cfg" shared 0
+
+	validate_rate_pair "$cfg" "$download" "$min_download" download || CONFIG_ERROR=1
+	validate_rate_pair "$cfg" "$upload" "$min_upload" upload || CONFIG_ERROR=1
+
+	if ! valid_priority "$priority"; then
+		echo "eqos: $cfg priority must be critical, high, normal or low" >&2
+		CONFIG_ERROR=1
+	fi
+
+	if [ -n "$weight" ]; then
+		if ! is_uinteger "$weight" || [ "$weight" -lt 1 ] ||
+		   [ "$weight" -gt "$WEIGHT_MAX" ]; then
+			echo "eqos: $cfg weight must be between 1 and $WEIGHT_MAX" >&2
+			CONFIG_ERROR=1
+		fi
+	fi
+
+	if [ -n "$queue" ]; then
+		if ! valid_queue_slot "$queue"; then
+			echo "eqos: $cfg queue slot must be 1 to $HW_SLOT_MAX or $SOFT_SLOT_BASE to $SLOT_MAX" >&2
+			CONFIG_ERROR=1
+		fi
+	fi
+}
+
+# Fills DEV_* from the device section, letting a referenced profile override
+# every rate it defines. A shared profile puts all of its members on one queue,
+# so they share the bandwidth; an unshared one is a plain rate template and each
+# member gets a queue, and the rates, for itself.
+resolve_device() {
+	local cfg="$1"
+	local ptype pqueue key
+
+	config_get DEV_QUEUE "$cfg" queue
+	[ -n "$DEV_QUEUE" ] || config_get DEV_QUEUE "$cfg" comment
+	config_get DEV_DOWNLOAD "$cfg" download 0
+	config_get DEV_UPLOAD "$cfg" upload 0
+	config_get DEV_MIN_DOWNLOAD "$cfg" min_download 0
+	config_get DEV_MIN_UPLOAD "$cfg" min_upload 0
+	config_get DEV_PRIORITY "$cfg" priority normal
+	config_get DEV_WEIGHT "$cfg" weight
+	config_get DEV_PROFILE "$cfg" profile
+	config_get DEV_SELECTOR "$cfg" selector
+	config_get DEV_IP "$cfg" ip
+	config_get DEV_IP6 "$cfg" ip6
+	config_get DEV_MAC "$cfg" mac
+	DEV_SHARED=0
+	DEV_ADDRESS=""
+
+	if [ -n "$DEV_PROFILE" ]; then
+		config_get ptype "$DEV_PROFILE" TYPE
+		if [ "$ptype" != "profile" ]; then
+			echo "eqos: $cfg references unknown profile $DEV_PROFILE" >&2
+			return 1
+		fi
+
+		config_get DEV_DOWNLOAD "$DEV_PROFILE" download 0
+		config_get DEV_UPLOAD "$DEV_PROFILE" upload 0
+		config_get DEV_MIN_DOWNLOAD "$DEV_PROFILE" min_download 0
+		config_get DEV_MIN_UPLOAD "$DEV_PROFILE" min_upload 0
+		config_get DEV_PRIORITY "$DEV_PROFILE" priority normal
+		config_get DEV_WEIGHT "$DEV_PROFILE" weight
+		config_get_bool DEV_SHARED "$DEV_PROFILE" shared 0
+
+		config_get pqueue "$DEV_PROFILE" queue
+		[ -z "$pqueue" ] || DEV_SHARED=1
+		[ -z "$pqueue" ] || DEV_QUEUE="$pqueue"
+	fi
+
+	# An explicit weight wins over the priority level it would otherwise imply.
+	is_uinteger "$DEV_WEIGHT" || DEV_WEIGHT="$(priority_weight "$DEV_PRIORITY")"
+
+	if [ -z "$DEV_QUEUE" ]; then
+		if [ "$DEV_SHARED" -eq 1 ]; then
+			key="$DEV_PROFILE"
+		else
+			key="$cfg"
+		fi
+		DEV_QUEUE="$(lookup_slot "$key")"
+	fi
+
+	local mac=""
+
+	case "$DEV_SELECTOR" in
+		mac)
+			mac="$DEV_MAC"
+			DEV_ADDRESS="$(mac_to_ip "$DEV_MAC")" || DEV_ADDRESS=""
+			;;
+		ip6)
+			DEV_ADDRESS="$DEV_IP6"
+			;;
+		*)
+			DEV_ADDRESS="$DEV_IP"
+			[ -n "$DEV_ADDRESS" ] || DEV_ADDRESS="$DEV_IP6"
+			;;
+	esac
+
+	# One rule, every address the host answers on. Without this the IPv6 half
+	# of its traffic matches nothing and rides the catch-all queue, which is
+	# the same as having no limit at all on a line that carries IPv6.
+	DEV_EXTRA=""
+	[ -n "$mac" ] || mac="$(ip_to_mac "$DEV_ADDRESS")"
+	DEV_MAC="$mac"
+
+	if [ -n "$mac" ]; then
+		local extra
+
+		for extra in $(host_ipv6 "$mac"); do
+			[ "$extra" != "$DEV_ADDRESS" ] || continue
+			DEV_EXTRA="${DEV_EXTRA}${extra} "
+		done
+
+		# The same in reverse: a rule written against an IPv6 address has to
+		# pick up the IPv4 lease of that host.
+		if [ "$DEV_SELECTOR" = "ip6" ]; then
+			extra="$(mac_to_ip "$mac")" || extra=""
+			[ -z "$extra" ] || DEV_EXTRA="${DEV_EXTRA}${extra} "
+		fi
+	fi
+
+	return 0
+}
+
 validate_device() {
 	local cfg="$1"
 	local enabled
 
 	config_get_bool enabled "$cfg" enabled 1
+	rule_due "$cfg" || return 0
 	[ "$enabled" -eq 1 ] || return 0
 
-	local ip ip6 queue selector selector_count selector_key
-	local download upload
-	config_get ip "$cfg" ip
-	config_get ip6 "$cfg" ip6
-	config_get download "$cfg" download 0
-	config_get upload "$cfg" upload 0
-	config_get queue "$cfg" queue
-	config_get selector "$cfg" selector
-	[ -n "$queue" ] || config_get queue "$cfg" comment
+	local selector_count selector_key
 
-	if ! is_uinteger "$queue" || [ "$queue" -lt 1 ] || [ "$queue" -gt 65535 ]; then
-		echo "eqos: $cfg queue slot must be between 1 and 65535" >&2
+	if ! resolve_device "$cfg"; then
 		CONFIG_ERROR=1
 		return 0
 	fi
 
-	case " $USED_QUEUES " in
-		*" $queue "*)
-			echo "eqos: queue slot $queue is used by more than one rule" >&2
-			CONFIG_ERROR=1
-			return 0
-			;;
-	esac
-	USED_QUEUES="${USED_QUEUES}${queue} "
-
-	if ! is_uinteger "$download" || ! is_uinteger "$upload"; then
-		echo "eqos: $cfg download and upload rates must be integers" >&2
+	if [ -z "$DEV_QUEUE" ]; then
+		echo "eqos: $cfg could not be given a queue slot" >&2
 		CONFIG_ERROR=1
 		return 0
 	fi
 
-	if [ "$download" -gt "$QDMA_RATE_MAX" ] || [ "$upload" -gt "$QDMA_RATE_MAX" ]; then
-		echo "eqos: $cfg download and upload rates must not exceed $QDMA_RATE_MAX kbit/s" >&2
+	if ! valid_queue_slot "$DEV_QUEUE"; then
+		echo "eqos: $cfg queue slot must be 1 to $HW_SLOT_MAX or $SOFT_SLOT_BASE to $SLOT_MAX" >&2
 		CONFIG_ERROR=1
 		return 0
 	fi
 
-	selector_count=0
-	[ -z "$ip" ] || selector_count=$((selector_count + 1))
-	[ -z "$ip6" ] || selector_count=$((selector_count + 1))
-
-	if [ "$selector_count" -ne 1 ]; then
-		echo "eqos: $cfg must set exactly one match field: ip or ip6" >&2
-		CONFIG_ERROR=1
-		return 0
-	fi
-
-	case "$selector" in
-		''|ip|ip6) ;;
-		*)
-			echo "eqos: $cfg selector must be ip or ip6" >&2
-			CONFIG_ERROR=1
-			return 0
-			;;
-	esac
-
-	case "$selector" in
-		ip)
-			if [ -z "$ip" ]; then
-				echo "eqos: $cfg selector does not match configured field" >&2
+	# Members of a shared profile deliberately land on the same slot. Any other
+	# collision is a configuration error.
+	if [ "$DEV_SHARED" -eq 0 ]; then
+		case " $USED_QUEUES " in
+			*" $DEV_QUEUE "*)
+				echo "eqos: queue slot $DEV_QUEUE is used by more than one rule" >&2
 				CONFIG_ERROR=1
 				return 0
-			fi
-			;;
-		ip6)
-			if [ -z "$ip6" ]; then
-				echo "eqos: $cfg selector does not match configured field" >&2
-				CONFIG_ERROR=1
-				return 0
-			fi
-			;;
-	esac
-
-	if [ -n "$ip" ]; then
-		selector_key="ip:$ip"
+				;;
+		esac
+		USED_QUEUES="${USED_QUEUES}${DEV_QUEUE} "
 	else
-		selector_key="ip6:$ip6"
+		case "$PROFILE_QUEUES" in
+			*" $DEV_QUEUE:$DEV_PROFILE "*) ;;
+			*)
+				echo "eqos: queue slot $DEV_QUEUE of profile $DEV_PROFILE is claimed elsewhere" >&2
+				CONFIG_ERROR=1
+				return 0
+				;;
+		esac
+	fi
+
+	validate_rate_pair "$cfg" "$DEV_DOWNLOAD" "$DEV_MIN_DOWNLOAD" download || CONFIG_ERROR=1
+	validate_rate_pair "$cfg" "$DEV_UPLOAD" "$DEV_MIN_UPLOAD" upload || CONFIG_ERROR=1
+
+	if ! valid_priority "$DEV_PRIORITY"; then
+		echo "eqos: $cfg priority must be critical, high, normal or low" >&2
+		CONFIG_ERROR=1
+		return 0
+	fi
+
+	if ! is_uinteger "$DEV_WEIGHT" || [ "$DEV_WEIGHT" -lt 1 ] ||
+	   [ "$DEV_WEIGHT" -gt "$WEIGHT_MAX" ]; then
+		echo "eqos: $cfg weight must be between 1 and $WEIGHT_MAX" >&2
+		CONFIG_ERROR=1
+		return 0
+	fi
+
+	case "$DEV_SELECTOR" in
+		''|ip|ip6|mac) ;;
+		*)
+			echo "eqos: $cfg selector must be ip, ip6 or mac" >&2
+			CONFIG_ERROR=1
+			return 0
+			;;
+	esac
+
+	if [ "$DEV_SELECTOR" = "mac" ]; then
+		if ! valid_mac "$DEV_MAC"; then
+			echo "eqos: $cfg needs a valid MAC address" >&2
+			CONFIG_ERROR=1
+			return 0
+		fi
+
+		selector_key="mac:$(echo "$DEV_MAC" | tr 'A-Z' 'a-z')"
+	else
+		selector_count=0
+		[ -z "$DEV_IP" ] || selector_count=$((selector_count + 1))
+		[ -z "$DEV_IP6" ] || selector_count=$((selector_count + 1))
+
+		if [ "$selector_count" -ne 1 ]; then
+			echo "eqos: $cfg must set exactly one match field: ip or ip6" >&2
+			CONFIG_ERROR=1
+			return 0
+		fi
+
+		if [ "$DEV_SELECTOR" = "ip" ] && [ -z "$DEV_IP" ]; then
+			echo "eqos: $cfg selector does not match configured field" >&2
+			CONFIG_ERROR=1
+			return 0
+		fi
+
+		if [ "$DEV_SELECTOR" = "ip6" ] && [ -z "$DEV_IP6" ]; then
+			echo "eqos: $cfg selector does not match configured field" >&2
+			CONFIG_ERROR=1
+			return 0
+		fi
+
+		if [ -n "$DEV_IP" ]; then
+			selector_key="ip:$DEV_IP"
+		else
+			selector_key="ip6:$DEV_IP6"
+		fi
 	fi
 
 	case "$USED_SELECTORS" in
@@ -113,39 +754,380 @@ validate_device() {
 
 parse_device() {
 	local cfg="$1"
+	local enabled total_download total_upload up_soft dl_soft
+
+	config_get_bool enabled "$cfg" enabled 1
+	[ "$enabled" -eq 1 ] || return 0
+	rule_due "$cfg" || return 0
+
+	if ! resolve_device "$cfg"; then
+		CONFIG_ERROR=1
+		return 0
+	fi
+
+	# A MAC rule for a host that has never taken a lease has nothing to match
+	# on yet. Skip it rather than fail the whole service; the dhcp hotplug
+	# brings it back as soon as the host shows up.
+	if [ -z "$DEV_ADDRESS" ]; then
+		echo "eqos: $cfg has no address to match yet, rule skipped" >&2
+		return 0
+	fi
+
+	config_get total_download config download
+	config_get total_upload config upload
+
+	record_rule "$cfg"
+
+	# A per-device class on the WAN device cannot work: it classifies on the
+	# firewall mark, and HNAT never restores the mark on a flow it has taken
+	# over, so everything accelerated lands in the default class. Shape upload
+	# on the LAN ingress instead, where the source address is still the client.
+	up_soft=0
+	[ -z "$WAN_DEV" ] || up_soft=1
+
+	dl_soft=0
+	[ "$DOWNLOAD_SOFT" = "1" ] && dl_soft=1
+
+	if ! eqos add "$DEV_QUEUE" "$DEV_DOWNLOAD" "$DEV_UPLOAD" "$DEV_ADDRESS" \
+		"$total_download" "$total_upload" \
+		"$DEV_MIN_DOWNLOAD" "$DEV_MIN_UPLOAD" "$DEV_WEIGHT" "$up_soft" \
+		"$dl_soft"; then
+		CONFIG_ERROR=1
+		return 0
+	fi
+
+	local extra
+	for extra in $DEV_EXTRA; do
+		eqos add-addr "$DEV_QUEUE" "$extra" "$up_soft" "$dl_soft" ||
+			echo "eqos: $cfg could not add $extra to queue $DEV_QUEUE" >&2
+	done
+
+	record_addresses "$up_soft" "$dl_soft"
+}
+
+# What the slot already watches. Without a MAC there is nothing to follow.
+record_addresses() {
+	[ -n "$DEV_MAC" ] || return 0
+
+	printf '%s\t%s\t%s\t%s\t%s\n' "$DEV_QUEUE" "$DEV_MAC" "$1" "$2" \
+		"$DEV_ADDRESS $DEV_EXTRA" >> "$V6_FILE" 2>/dev/null
+}
+
+# New addresses join the slot they belong to without tearing anything down.
+refresh_addresses() {
+	local slot mac up_soft dl_soft known addr fresh worst
+	local tmp="$V6_FILE.new"
+
+	[ -s "$V6_FILE" ] || return 0
+	: > "$tmp" 2>/dev/null || return 0
+
+	while IFS="$(printf '\t')" read -r slot mac up_soft dl_soft known; do
+		[ -n "$slot" ] || continue
+
+		fresh=""
+		for addr in $(host_ipv6 "$mac"); do
+			case " $known $fresh " in *" $addr "*) continue ;; esac
+
+			if eqos add-addr "$slot" "$addr" "$up_soft" "$dl_soft"; then
+				fresh="${fresh}${addr} "
+				logger -t eqos "queue $slot follows $mac to $addr"
+			fi
+		done
+
+		# Unquoted, so the list collapses to one word per address instead of
+		# growing a trailing space each round.
+		printf '%s\t%s\t%s\t%s\t%s\n' "$slot" "$mac" "$up_soft" \
+			"$dl_soft" "$(echo $known $fresh)" >> "$tmp"
+	done < "$V6_FILE"
+
+	mv "$tmp" "$V6_FILE" 2>/dev/null || rm -f "$tmp"
+
+	# The busiest slot decides for all of them.
+	worst="$(awk '{ n = NF - 4; if (n > m) m = n } END { print m + 0 }' \
+		"$V6_FILE" 2>/dev/null)"
+	[ -n "$worst" ] || return 0
+	[ "$worst" -gt "$V6_MAX" ] || return 0
+
+	# procd does the restart: this runs as a child of the service and would
+	# kill itself halfway.
+	logger -t eqos "queue with $worst addresses, asking for a rebuild"
+	ubus call service event \
+		'{"type":"config.change","data":{"package":"eqos"}}' \
+		>/dev/null 2>&1
+}
+
+record_rule() {
+	local cfg="$1"
+
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		"$DEV_QUEUE" "$cfg" "$DEV_ADDRESS" "${DEV_PROFILE:--}" "$DEV_PRIORITY" \
+		"$DEV_DOWNLOAD" "$DEV_UPLOAD" "$DEV_MIN_DOWNLOAD" "$DEV_MIN_UPLOAD" \
+		device >> "$MAP_FILE" 2>/dev/null
+}
+
+# HTB and the QDMA scheduler both take a guarantee at face value and neither
+# complains when the guarantees add up to more than there is. They simply stop
+# being honoured, which looks exactly like a rule that does not work. Counted
+# once per queue, because the members of a shared profile sit on one.
+collect_guarantee_device() {
+	local cfg="$1"
 	local enabled
 
 	config_get_bool enabled "$cfg" enabled 1
 	[ "$enabled" -eq 1 ] || return 0
+	resolve_device "$cfg" || return 0
+	[ -n "$DEV_ADDRESS" ] || return 0
 
-	local ip ip6 address download upload queue total_download total_upload
-	config_get ip "$cfg" ip
-	config_get ip6 "$cfg" ip6
-	config_get download "$cfg" download 0
-	config_get upload "$cfg" upload 0
-	config_get queue "$cfg" queue
+	case " $GUARANTEE_SLOTS " in
+		*" $DEV_QUEUE "*) return 0 ;;
+	esac
+
+	GUARANTEE_SLOTS="${GUARANTEE_SLOTS}${DEV_QUEUE} "
+	GUARANTEE_DL=$((GUARANTEE_DL + DEV_MIN_DOWNLOAD))
+	GUARANTEE_UP=$((GUARANTEE_UP + DEV_MIN_UPLOAD))
+}
+
+collect_guarantee_traffic() {
+	local cfg="$1"
+	local enabled
+
+	config_get_bool enabled "$cfg" enabled 1
+	[ "$enabled" -eq 1 ] || return 0
+	resolve_traffic "$cfg" || return 0
+	traffic_has_queue || return 0
+
+	GUARANTEE_DL=$((GUARANTEE_DL + TRF_MIN_DOWNLOAD))
+	GUARANTEE_UP=$((GUARANTEE_UP + TRF_MIN_UPLOAD))
+}
+
+check_guarantees() {
+	local total_dl=$(($1 * 1000))
+	local total_up=$(($2 * 1000))
+
+	GUARANTEE_DL=0
+	GUARANTEE_UP=0
+	GUARANTEE_SLOTS=" "
+	config_foreach collect_guarantee_device device
+	config_foreach collect_guarantee_traffic traffic
+
+	[ "$GUARANTEE_DL" -le "$total_dl" ] ||
+		warn "the guaranteed download rates add up to $((GUARANTEE_DL / 1000)) Mbit/s but the line is set to $1 Mbit/s, so the scheduler cannot honour them all"
+	[ "$GUARANTEE_UP" -le "$total_up" ] ||
+		warn "the guaranteed upload rates add up to $((GUARANTEE_UP / 1000)) Mbit/s but the line is set to $2 Mbit/s, so the scheduler cannot honour them all"
+}
+
+# Fills TRF_* the same way resolve_device fills DEV_*, except that a profile
+# here only lends its rates and its priority: the queue and the sharing flag
+# belong to the devices that use it.
+resolve_traffic() {
+	local cfg="$1"
+	local ptype scope entry resolved extra
+
+	config_get TRF_QUEUE "$cfg" queue
+	config_get TRF_DOWNLOAD "$cfg" download 0
+	config_get TRF_UPLOAD "$cfg" upload 0
+	config_get TRF_MIN_DOWNLOAD "$cfg" min_download 0
+	config_get TRF_MIN_UPLOAD "$cfg" min_upload 0
+	config_get TRF_PRIORITY "$cfg" priority normal
+	config_get TRF_WEIGHT "$cfg" weight
+	config_get TRF_PROFILE "$cfg" profile
+	config_get TRF_PROTO "$cfg" proto
+	config_get TRF_PORTS "$cfg" ports
+	config_get TRF_DSCP "$cfg" dscp
+	config_get_bool TRF_OVERRIDE "$cfg" override 0
+
+	# Which addresses the rule applies to. A MAC resolves the same way it does
+	# for a device rule, IPv6 addresses of that host included.
+	TRF_ADDRS=""
+	config_get scope "$cfg" device
+	for entry in $scope; do
+		if valid_mac "$entry"; then
+			resolved="$(mac_to_ip "$entry")" || resolved=""
+			if [ -z "$resolved" ]; then
+				echo "eqos: $cfg has no address yet for $entry" >&2
+				continue
+			fi
+			TRF_ADDRS="${TRF_ADDRS}${resolved} "
+			for extra in $(host_ipv6 "$entry"); do
+				TRF_ADDRS="${TRF_ADDRS}${extra} "
+			done
+		else
+			TRF_ADDRS="${TRF_ADDRS}${entry} "
+		fi
+	done
+
+	if [ -n "$TRF_PROFILE" ]; then
+		config_get ptype "$TRF_PROFILE" TYPE
+		if [ "$ptype" != "profile" ]; then
+			echo "eqos: $cfg references unknown profile $TRF_PROFILE" >&2
+			return 1
+		fi
+
+		config_get TRF_DOWNLOAD "$TRF_PROFILE" download 0
+		config_get TRF_UPLOAD "$TRF_PROFILE" upload 0
+		config_get TRF_MIN_DOWNLOAD "$TRF_PROFILE" min_download 0
+		config_get TRF_MIN_UPLOAD "$TRF_PROFILE" min_upload 0
+		config_get TRF_PRIORITY "$TRF_PROFILE" priority normal
+		config_get TRF_WEIGHT "$TRF_PROFILE" weight
+	fi
+
+	[ -n "$TRF_WEIGHT" ] || TRF_WEIGHT="$(priority_weight "$TRF_PRIORITY")"
+	[ -n "$TRF_QUEUE" ] || TRF_QUEUE="$(lookup_slot "$cfg")"
+
+	case "$TRF_PROTO" in
+		tcp) TRF_PROTO_LIST="tcp" ;;
+		udp) TRF_PROTO_LIST="udp" ;;
+		tcpudp|both) TRF_PROTO_LIST="tcp udp" ;;
+		*) TRF_PROTO_LIST="" ;;
+	esac
+
+	return 0
+}
+
+traffic_has_queue() {
+	is_uinteger "$TRF_QUEUE" && [ "$TRF_QUEUE" -ge 1 ] &&
+		[ "$TRF_QUEUE" -le "$HW_SLOT_MAX" ]
+}
+
+# What the rule matches on, in the words the user typed it in. The front end
+# shows this where a device rule shows an address.
+traffic_match() {
+	local out=""
+
+	[ -z "$TRF_PROTO_LIST" ] || out="$TRF_PROTO"
+	[ -z "$TRF_PORTS" ] || out="$out $TRF_PORTS"
+	[ -z "$TRF_DSCP" ] || out="${out:+$out }dscp $TRF_DSCP"
+
+	echo "${out# }"
+}
+
+validate_traffic() {
+	local cfg="$1"
+	local enabled
+
+	config_get_bool enabled "$cfg" enabled 1
+	rule_due "$cfg" || return 0
+	[ "$enabled" -eq 1 ] || return 0
+
+	if ! resolve_traffic "$cfg"; then
+		CONFIG_ERROR=1
+		return 0
+	fi
+
+	if [ -z "$TRF_PROTO_LIST" ] && [ -z "$TRF_DSCP" ]; then
+		echo "eqos: $cfg matches nothing, set a protocol or a DSCP value" >&2
+		CONFIG_ERROR=1
+		return 0
+	fi
+
+	# Ports are handed to nftables as a set body, so what goes in has to be
+	# digits, ranges and commas and nothing that could close the statement.
+	case "$TRF_PORTS" in
+		*[!0-9,-]*)
+			echo "eqos: $cfg ports must be numbers, ranges and commas" >&2
+			CONFIG_ERROR=1
+			return 0
+			;;
+	esac
+
+	case "$TRF_DSCP" in
+		*[!a-zA-Z0-9]*)
+			echo "eqos: $cfg DSCP must be a class name or a number" >&2
+			CONFIG_ERROR=1
+			return 0
+			;;
+	esac
+
+	# There is no software fallback for a service rule: without a hardware
+	# queue the mark has nowhere to point. One rule that cannot be placed is
+	# dropped with a message rather than failing every limit on the router.
+	if ! traffic_has_queue; then
+		echo "eqos: $cfg found no free hardware queue, rule skipped" >&2
+		return 0
+	fi
+
+	case " $USED_QUEUES " in
+		*" $TRF_QUEUE "*)
+			echo "eqos: queue slot $TRF_QUEUE is used by more than one rule" >&2
+			CONFIG_ERROR=1
+			return 0
+			;;
+	esac
+	USED_QUEUES="${USED_QUEUES}${TRF_QUEUE} "
+
+	# Taking traffic out of a device limit with no ceiling of its own leaves
+	# that traffic with no limit at all.
+	if [ "$TRF_OVERRIDE" -eq 1 ] &&
+	   [ "$TRF_DOWNLOAD" -eq 0 ] && [ "$TRF_UPLOAD" -eq 0 ]; then
+		warn "rule $cfg takes traffic out of the device limits and sets no ceiling of its own, so that traffic ends up with no limit at all"
+	fi
+
+	validate_rate_pair "$cfg" "$TRF_DOWNLOAD" "$TRF_MIN_DOWNLOAD" download ||
+		CONFIG_ERROR=1
+	validate_rate_pair "$cfg" "$TRF_UPLOAD" "$TRF_MIN_UPLOAD" upload ||
+		CONFIG_ERROR=1
+
+	if ! valid_priority "$TRF_PRIORITY"; then
+		echo "eqos: $cfg priority must be critical, high, normal or low" >&2
+		CONFIG_ERROR=1
+	fi
+}
+
+# Added after every device rule on purpose: the rules are read in order and the
+# last mark wins, so a flow that a service rule claims leaves the queue its
+# device would have put it in.
+parse_traffic() {
+	local cfg="$1"
+	local enabled total_download total_upload
+
+	config_get_bool enabled "$cfg" enabled 1
+	[ "$enabled" -eq 1 ] || return 0
+	rule_due "$cfg" || return 0
+
+	if ! resolve_traffic "$cfg"; then
+		CONFIG_ERROR=1
+		return 0
+	fi
+
+	traffic_has_queue || return 0
+
 	config_get total_download config download
 	config_get total_upload config upload
-	[ -n "$queue" ] || config_get queue "$cfg" comment
 
-	address="$ip"
-	[ -n "$address" ] || address="$ip6"
-	if ! eqos add "$queue" "$download" "$upload" "$address" \
-		"$total_download" "$total_upload"; then
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		"$TRF_QUEUE" "$cfg" "$(traffic_match)" "${TRF_PROFILE:--}" \
+		"$TRF_PRIORITY" "$TRF_DOWNLOAD" "$TRF_UPLOAD" \
+		"$TRF_MIN_DOWNLOAD" "$TRF_MIN_UPLOAD" traffic \
+		>> "$MAP_FILE" 2>/dev/null
+
+	if ! eqos add-traffic "$TRF_QUEUE" "$TRF_DOWNLOAD" "$TRF_UPLOAD" \
+		"$TRF_MIN_DOWNLOAD" "$TRF_MIN_UPLOAD" "$TRF_WEIGHT" \
+		"$TRF_PROTO_LIST" "$TRF_PORTS" "$TRF_DSCP" \
+		"$total_download" "$total_upload" "$TRF_OVERRIDE" \
+		"$TRF_ADDRS"; then
 		CONFIG_ERROR=1
 	fi
 }
 
 start_service() {
 	config_load eqos
+	load_weights
 
 	local enabled
 	config_get_bool enabled config enabled 0
 	[ "$enabled" -eq 1 ] || return 0
 
-	local download upload
+	local download upload direction scheduler bind_rate upload_mode wan_device
+	local download_mode lan_device
 	config_get download config download
 	config_get upload config upload
+	config_get direction config direction both
+	config_get scheduler config scheduler wrr
+	config_get bind_rate config bind_rate 5
+	config_get upload_mode config upload_mode auto
+	config_get download_mode config download_mode auto
+	config_get lan_device config lan_device "$LAN_DEVICE_DEFAULT"
+	config_get wan_device config wan_device
 
 	if ! is_uinteger "$download" || ! is_uinteger "$upload" ||
 	   [ "$download" -lt 1 ] || [ "$upload" -lt 1 ] ||
@@ -154,31 +1136,169 @@ start_service() {
 		return 1
 	fi
 
+	case "$direction" in
+		both|uplink|downlink) ;;
+		*)
+			echo "eqos: direction must be both, uplink or downlink" >&2
+			return 1
+			;;
+	esac
+
+	case "$scheduler" in
+		wrr|sp) ;;
+		*)
+			echo "eqos: scheduler must be wrr or sp" >&2
+			return 1
+			;;
+	esac
+
+	case "$upload_mode" in
+		auto|hardware|software) ;;
+		*)
+			echo "eqos: upload_mode must be auto, hardware or software" >&2
+			return 1
+			;;
+	esac
+
+	case "$download_mode" in
+		auto|hardware|software) ;;
+		*)
+			echo "eqos: download_mode must be auto, hardware or software" >&2
+			return 1
+			;;
+	esac
+
+	LAN_DEVICE="$lan_device"
+	DOWNLOAD_SOFT=0
+	if download_shaper_needed "$download_mode"; then
+		DOWNLOAD_SOFT=1
+	fi
+
+	if ! is_uinteger "$bind_rate" || [ "$bind_rate" -lt 1 ] ||
+	   [ "$bind_rate" -gt "$BIND_RATE_MAX" ]; then
+		echo "eqos: bind_rate must be between 1 and $BIND_RATE_MAX packets" >&2
+		return 1
+	fi
+
 	CONFIG_ERROR=0
+	: > "$WARN_FILE" 2>/dev/null
+	RESERVED=" "
+	ASSIGNED=" "
+	ALLOC_LIST=""
+	SOFT_FALLBACK=0
+	config_foreach reserve_explicit_slot device
+	config_foreach reserve_explicit_slot profile
+	config_foreach reserve_explicit_slot traffic
+	config_foreach collect_alloc_profile profile
+	config_foreach collect_alloc_device device
+	config_foreach collect_alloc_traffic traffic
+	allocate_slots
+
+	PROFILE_QUEUES=" "
+	config_foreach collect_profile_queue profile
+	config_foreach validate_profile profile
+	[ "$CONFIG_ERROR" -eq 0 ] || return 1
+
 	USED_QUEUES=" "
 	USED_SELECTORS=" "
 	config_foreach validate_device device
+	config_foreach validate_traffic traffic
 	[ "$CONFIG_ERROR" -eq 0 ] || return 1
 
-	if ! eqos start "$download" "$upload"; then
+	WAN_DEV=""
+	if wan_shaper_needed "$upload_mode" "$wan_device"; then
+		WAN_DEV="$(detect_wan_device "$wan_device")"
+		if [ -z "$WAN_DEV" ]; then
+			echo "eqos: cannot determine the WAN device, upload stays unshaped" >&2
+		fi
+	fi
+
+	if ! eqos start "$download" "$upload" "$direction" "$scheduler"; then
+		eqos stop >/dev/null 2>&1
+		return 1
+	fi
+
+	if [ -n "$WAN_DEV" ] && ! eqos wan-start "$WAN_DEV" "$upload"; then
 		eqos stop >/dev/null 2>&1
 		return 1
 	fi
 
 	CONFIG_ERROR=0
+	: > "$MAP_FILE" 2>/dev/null
+	: > "$V6_FILE" 2>/dev/null
+	check_guarantees "$download" "$upload"
+
 	config_foreach parse_device device
+	config_foreach parse_traffic traffic
 	if [ "$CONFIG_ERROR" -ne 0 ]; then
 		eqos stop >/dev/null 2>&1
 		return 1
 	fi
 
-	if ! eqos enable; then
+	if ! eqos enable "$bind_rate"; then
 		eqos stop >/dev/null 2>&1
 		return 1
 	fi
+
+	due_signature > "$SCHED_FILE" 2>/dev/null
+
+	start_watcher
+}
+
+collect_due() {
+	local cfg="$1"
+	local enabled
+
+	config_get_bool enabled "$cfg" enabled 1
+	[ "$enabled" -eq 1 ] || return 0
+	rule_due "$cfg" || return 0
+
+	DUE_LIST="${DUE_LIST}${cfg} "
+}
+
+due_signature() {
+	DUE_LIST=""
+	config_foreach collect_due device
+	config_foreach collect_due traffic
+
+	echo "$DUE_LIST"
+}
+
+check_schedule() {
+	local due
+
+	[ -f "$SCHED_FILE" ] || return 0
+
+	config_load eqos
+	due="$(due_signature)"
+	[ "$due" != "$(cat "$SCHED_FILE" 2>/dev/null)" ] || return 0
+
+	logger -t eqos "a schedule window changed, reapplying"
+	ubus call service event \
+		'{"type":"config.change","data":{"package":"eqos"}}' \
+		>/dev/null 2>&1
+}
+
+# The only piece that stays running: the queues live in the kernel and the work
+# is done at start. This just checks now and then for new IPv6 addresses.
+start_watcher() {
+	local interval
+
+	config_get interval config refresh_interval "$REFRESH_INTERVAL_DEFAULT"
+	is_uinteger "$interval" || interval="$REFRESH_INTERVAL_DEFAULT"
+	[ "$interval" -gt 0 ] || return 0
+	[ "$interval" -ge "$REFRESH_INTERVAL_MIN" ] ||
+		interval="$REFRESH_INTERVAL_MIN"
+
+	procd_open_instance addresses
+	procd_set_param command /bin/sh -c \
+		"while sleep $interval; do /etc/init.d/eqos refresh; done"
+	procd_set_param respawn 3600 5 0
+	procd_close_instance
 }
 
 stop_service() {
+	rm -f "$MAP_FILE" "$WARN_FILE" "$V6_FILE" "$SCHED_FILE"
 	eqos stop
 }
 
@@ -196,4 +1316,9 @@ reload_service() {
 
 service_triggers() {
 	procd_add_reload_trigger eqos
+}
+
+refresh() {
+	check_schedule
+	refresh_addresses
 }

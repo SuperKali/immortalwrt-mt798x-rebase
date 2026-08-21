@@ -3,15 +3,160 @@ config eqos 'config'
 	option download     100
 	option upload       20
 
-# Per-device bandwidth is kbit/s.
-# Slots 1~31 use NETSYS V2/V3 64-QDMA HQoS.
-# Slots 32 and above use tc software shaping with IPv4 or IPv6 selectors.
-# qid0 is the default queue and qid63 is reserved for PPD.
-# Configure exactly one of ip or ip6. LuCI may also save selector.
+# direction:   both, uplink or downlink. Uplink HQoS only engages when the
+#              egress device name starts with hnat_wan_if, so on a router whose
+#              WAN is an external device (USB modem, PPPoE) it never fires.
+# scheduler:   wrr shares the link by weight, sp serves the highest queue first.
+# bind_rate:   HNAT binding threshold in packets, 1-30. This also overwrites
+#              turboacc.config.fastpath_mh_bind_rate.
+# upload_mode: auto follows the WAN device, hardware always uses the QDMA
+#              queues, software always shapes upload with tc on the WAN device.
+# download_mode:
+#              auto shapes download in software when the LAN bridge has a
+#              radio in it, because a hardware queue only carries what leaves
+#              through the wired path and would miss every Wi-Fi client.
+#              A device shaped in software is excluded from HNAT offload.
+# wan_device:  leave empty to take the l3_device of the wan interface.
+# lan_device:  the bridge the clients are on, br-lan unless renamed.
+# aqm:         what sits at the bottom of every queue: empty or auto takes
+#              cake where the kernel has it and falls back to fq_codel, or
+#              name one of them, or none to leave the leaves plain. It changes
+#              how long a packet waits in a full queue, not the rates.
+# min_floor:   kbit/s a queue keeps when it asked for no guarantee and
+#              everything else is busy. 128 unless set.
+# weight_critical, weight_high, weight_normal, weight_low:
+#              how the four priority levels split the line under weighted
+#              round robin, 1 to 15. What counts is the distance between
+#              them: 15 against 1 gives a critical queue fifteen times the
+#              share of a low one. Strict priority ignores them.
+# refresh_interval:
+#              seconds between two looks at the neighbour table, 60 unless
+#              set, 10 at the least, 0 to stop looking. A host takes a new
+#              IPv6 address without asking anyone, so a rule written for it
+#              has to be told; the check only adds what is missing and never
+#              touches the queues that are already up.
+	option direction     'both'
+	option scheduler     'wrr'
+	option bind_rate     5
+	option upload_mode   'auto'
+	option download_mode 'auto'
+	option wan_device    ''
+	option lan_device    'br-lan'
+#	option aqm           'auto'
+#	option min_floor     128
+#	option weight_critical 15
+#	option weight_high      8
+#	option weight_normal    4
+#	option weight_low       1
+#	option refresh_interval 60
+
+# The total rates above are enforced globally: traffic that no device rule
+# matches is steered to the catch-all queues qid31 (upload) and qid62
+# (download), both capped at the totals.
+#
+# A single device cannot be exempted from those totals: on the WAN the packets
+# are already SNATed, and the firewall mark - the only thing left to match on -
+# survives only for flows kept off the HNAT offload, where the tag that keeps
+# them off it is the same value for every such device.
+#
+# Queue slots are handed out by the service, highest priority first, counting
+# down from qid30 so a higher priority also lands on a higher queue: that makes
+# the priority meaningful under strict priority scheduling as well as weighted
+# round robin. Slots 1~30 use NETSYS V2/V3 64-QDMA HQoS and 64 upwards fall
+# back to tc software shaping. The numbers in between are taken: qid0 is the
+# default queue, qid31 and qid62 are the catch-all queues and qid63 is reserved
+# for PPD, so a slot in 31~63 is refused.
+#
+# priority:    critical, high, normal or low, mapping to weights 15, 8, 4 and 1.
+# min_*:       bandwidth in kbit/s the scheduler guarantees, 0 for none.
+# download,
+# upload:      ceiling in kbit/s, 0 for no ceiling. A rule with no ceiling is
+#              still worth having: it carries the priority and the guarantee.
+# weight:      overrides the weight the priority implies, 1-15.
+# queue:       pins the rule to a slot instead of letting the service pick one,
+#              1~30 for a hardware queue or 64 and above for software shaping.
+# selector:    ip, ip6 or mac. A MAC is resolved against the DHCP leases and
+#              followed across address changes by /etc/hotplug.d/dhcp/50-eqos.
+#config device
+#	option enabled      1
+#	option selector     'mac'
+#	option mac          'aa:bb:cc:dd:ee:ff'
+#	option priority     'normal'
+#	option download     0
+#	option upload       0
+#	option min_download 0
+#	option min_upload   0
+
+# A profile overrides every rate of the devices that reference it. With
+# shared set all its members go on one queue and therefore share the
+# bandwidth: use it for "the guest network gets 20 Mbit in total". Without it
+# the profile is a rate template and every member keeps its own queue.
+#config profile 'guest'
+#	option name         'Guests'
+#	option priority     'low'
+#	option shared       1
+#	option download     20000
+#	option upload       5000
+#	option min_download 0
+#	option min_upload   0
+#
 #config device
 #	option enabled  1
-#	option queue    1
+#	option profile  'guest'
 #	option selector 'ip'
-#	option ip       '192.168.1.100'
-#	option download 10000
-#	option upload   5000
+#	option ip       '192.168.1.101'
+
+# A device rule and a traffic rule can both carry a window. Outside it the rule
+# is not applied at all, so the device keeps whatever the catch-all queues
+# give it.
+#
+# start, stop: HH:MM. Both empty means always on. A window that ends before it
+#          starts crosses midnight, so 22:00 to 07:00 is one stretch.
+# weekdays: mon tue wed thu fri sat sun, space separated. Empty means every
+#          day.
+#
+# The window is checked by the same periodic task that follows IPv6 addresses,
+# so refresh_interval also decides how sharply a window opens and closes, and
+# setting it to 0 stops windows from being applied at all.
+#config device
+#	option enabled  1
+#	option selector 'mac'
+#	option mac      'aa:bb:cc:dd:ee:ff'
+#	option priority 'low'
+#	option download 5000
+#	option upload   1000
+#	option start    '22:00'
+#	option stop     '07:00'
+#	option weekdays 'mon tue wed thu fri'
+
+# A traffic rule sorts by what a flow carries rather than by who sends it, so a
+# call keeps its place in the queue whichever device places it. These rules are
+# read after the device rules and their class wins, so a call from a device
+# that has a limit is still served first. They always take a hardware queue.
+#
+# proto:   tcp, udp or tcpudp. Leave empty to match on the marking alone.
+# ports:   the service ports, comma separated, ranges written with a hyphen.
+#          Leave empty to take the whole protocol.
+# dscp:    the class the device writes into its own packets: a name such as
+#          ef, cs6 or af41, or a number from 0 to 63. Phones and softphones
+#          usually mark voice as ef. It matches on its own, alongside the
+#          ports rather than together with them.
+# override: off by default, and the rule then only picks up traffic that no
+#          device rule matched, so the per-device limits stay intact. Turn it
+#          on and the rule also claims traffic from devices that have a limit,
+#          which takes that traffic out of the limit: give the rule a ceiling
+#          of its own or it ends up with none at all.
+# profile: take the rates and the priority from a profile. The rule still gets
+#          a queue of its own, because it is not a device.
+#config traffic 'voip'
+#	option enabled      1
+#	option name         'VoIP'
+#	option priority     'critical'
+#	option proto        'udp'
+#	option ports        '5060,5061,10000-20000'
+#	option dscp         'ef'
+#	option override     0
+#	option download     0
+#	option upload       0
+#	option min_download 512
+#	option min_upload   512

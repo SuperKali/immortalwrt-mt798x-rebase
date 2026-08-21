@@ -1,0 +1,36 @@
+#!/bin/sh
+# nftables matches on addresses, so a rule written against a MAC is resolved to
+# whatever address the host currently holds. A lease that moves the host has to
+# be followed, otherwise the rule silently stops matching.
+#
+# Only reload for a MAC eqos actually tracks, and only when the address really
+# changed: dnsmasq replays its leases at startup and renewals are frequent, and
+# a reload tears the whole queue setup down and builds it again.
+
+[ "$ACTION" = "add" ] || [ "$ACTION" = "update" ] || exit 0
+[ -n "$MACADDR" ] || exit 0
+[ -n "$IPADDR" ] || exit 0
+[ "$(uci -q get eqos.config.enabled)" = "1" ] || exit 0
+
+STATE_DIR="/var/run/eqos-mac"
+
+mac="$(echo "$MACADDR" | tr 'A-Z' 'a-z')"
+tracked=0
+
+for section in $(uci -q show eqos | sed -n "s/^eqos\.\([^.]*\)\.selector='mac'$/\1/p"); do
+	cfg_mac="$(uci -q get "eqos.$section.mac" 2>/dev/null | tr 'A-Z' 'a-z')"
+	if [ "$cfg_mac" = "$mac" ]; then
+		tracked=1
+		break
+	fi
+done
+
+[ "$tracked" -eq 1 ] || exit 0
+
+mkdir -p "$STATE_DIR"
+state="$STATE_DIR/$(echo "$mac" | tr ':' '-')"
+[ "$(cat "$state" 2>/dev/null)" = "$IPADDR" ] && exit 0
+printf '%s' "$IPADDR" > "$state"
+
+logger -t eqos "lease for $mac moved to $IPADDR, reloading"
+/etc/init.d/eqos reload
