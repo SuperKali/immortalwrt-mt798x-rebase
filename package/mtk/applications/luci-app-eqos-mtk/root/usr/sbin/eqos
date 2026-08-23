@@ -8,8 +8,8 @@ AQM_CHECKED=""
 # cake also shapes on its own, but as a leaf it is used purely as an AQM; it is
 # preferred where present because it isolates hosts as well as flows.
 AQM_CANDIDATES="cake fq_codel"
-# Sovrascritti dalla configurazione: aqm sceglie la disciplina della foglia,
-# min_floor: the rate a class gets when it asked for no guarantee.
+# Both come from the configuration: aqm picks the leaf discipline, min_floor
+# the rate a class gets when it asked for no guarantee.
 AQM_WANTED=""
 TC_LOCAL_CLASSID="ffff"
 # Everything no filter claimed. Without it htb sends unclassified packets
@@ -71,6 +71,14 @@ WEIGHT_MAX=15
 # line, not a constant.
 TC_MIN_FLOOR_DEFAULT=128
 TC_MIN_FLOOR=128
+# How a packet finds its class. "filters" mirrors LAN ingress onto an IFB and
+# reads a list of u32 filters on both devices. "priority" lets the forward
+# chain write the class into skb->priority, which htb_classify reads before it
+# runs a single filter, so the mirror, the redirect and every filter go away
+# and the upload classes move onto the WAN device where the packets really
+# leave.
+TC_CLASSIFY_DEFAULT="priority"
+TC_CLASSIFY="$TC_CLASSIFY_DEFAULT"
 DEFAULT_BIND_RATE=5
 DEFAULT_QUEUE_CFG="0 0 0 0 0 0 4"
 TUNABLES_READ=""
@@ -163,6 +171,29 @@ load_tunables() {
 		TC_MIN_FLOOR="$v" || TC_MIN_FLOOR="$TC_MIN_FLOOR_DEFAULT"
 
 	AQM_WANTED="$(uci -q get eqos.config.aqm)"
+
+	v="$(uci -q get eqos.config.classifier)"
+	case "$v" in
+		filters|priority) TC_CLASSIFY="$v" ;;
+		*) TC_CLASSIFY="$TC_CLASSIFY_DEFAULT" ;;
+	esac
+}
+
+by_priority() {
+	load_tunables
+	[ "$TC_CLASSIFY" = "priority" ]
+}
+
+# Where a software upload class lives. With the mirror it is the IFB; without
+# it, the WAN device the packets actually leave through. An upload class has
+# nowhere to go when upload is shaped in hardware, and the caller has to say so
+# rather than build a class nothing points at.
+soft_up_dev() {
+	if by_priority; then
+		cat "$WAN_STATE" 2>/dev/null
+	else
+		echo "$IFB_DEV"
+	fi
 }
 
 need_nft() {
@@ -348,31 +379,38 @@ start_qos() {
 		return 1
 	fi
 
-	ip link add "$IFB_DEV" type ifb || return 1
-
-	if ! ip link set dev "$IFB_DEV" up ||
-	   ! tc qdisc add dev "$dev" root handle 1: htb \
+	# Download only. Upload leaves through the WAN device and is shaped there,
+	# so on this side there is nothing to mirror and nothing to redirect.
+	if ! tc qdisc add dev "$dev" root handle 1: htb \
 		default "$TC_DEFAULT_CLASSID" ||
 	   ! tc class add dev "$dev" parent 1: classid 1:1 htb \
 		rate "${dl}mbit" ceil "${dl}mbit" \
 		burst "$(htb_burst $((dl * 1000)))" \
 		cburst "$(htb_burst $((dl * 1000)))" ||
-	   ! tc_default_class "$dev" $((dl * 1000)) ||
-	   ! tc qdisc add dev "$IFB_DEV" root handle 1: htb \
-		default "$TC_DEFAULT_CLASSID" ||
-	   ! tc class add dev "$IFB_DEV" parent 1: classid 1:1 htb \
-		rate "${up}mbit" ceil "${up}mbit" \
-		burst "$(htb_burst $((up * 1000)))" \
-		cburst "$(htb_burst $((up * 1000)))" ||
-	   ! tc_default_class "$IFB_DEV" $((up * 1000)) ||
-	   ! tc qdisc add dev "$dev" ingress ||
-	   ! tc filter add dev "$dev" parent ffff: protocol ip pref 1 u32 \
-		match u32 0 0 action mirred egress redirect dev "$IFB_DEV" ||
-	   ! tc filter add dev "$dev" parent ffff: protocol ipv6 pref 2 u32 \
-		match u32 0 0 action mirred egress redirect dev "$IFB_DEV" ||
-	   ! tc_exempt_local "$dev"; then
+	   ! tc_default_class "$dev" $((dl * 1000)); then
 		stop_qos "$dev"
 		return 1
+	fi
+
+	if ! by_priority; then
+		if ! ip link add "$IFB_DEV" type ifb ||
+		   ! ip link set dev "$IFB_DEV" up ||
+		   ! tc qdisc add dev "$IFB_DEV" root handle 1: htb \
+			default "$TC_DEFAULT_CLASSID" ||
+		   ! tc class add dev "$IFB_DEV" parent 1: classid 1:1 htb \
+			rate "${up}mbit" ceil "${up}mbit" \
+			burst "$(htb_burst $((up * 1000)))" \
+			cburst "$(htb_burst $((up * 1000)))" ||
+		   ! tc_default_class "$IFB_DEV" $((up * 1000)) ||
+		   ! tc qdisc add dev "$dev" ingress ||
+		   ! tc filter add dev "$dev" parent ffff: protocol ip pref 1 u32 \
+			match u32 0 0 action mirred egress redirect dev "$IFB_DEV" ||
+		   ! tc filter add dev "$dev" parent ffff: protocol ipv6 pref 2 u32 \
+			match u32 0 0 action mirred egress redirect dev "$IFB_DEV" ||
+		   ! tc_exempt_local "$dev"; then
+			stop_qos "$dev"
+			return 1
+		fi
 	fi
 
 	printf '%s' "$dev" > "$LAN_STATE"
@@ -581,9 +619,10 @@ ensure_tc_qos() {
 	[ "$dl" -le "$TOTAL_RATE_MAX" ] && [ "$up" -le "$TOTAL_RATE_MAX" ] ||
 		die "total rate must not exceed $TOTAL_RATE_MAX Mbit/s"
 
-	if tc qdisc show dev "$dev" 2>/dev/null | grep -q "qdisc htb 1:" &&
-	   tc qdisc show dev "$IFB_DEV" 2>/dev/null | grep -q "qdisc htb 1:"; then
-		return 0
+	if tc qdisc show dev "$dev" 2>/dev/null | grep -q "qdisc htb 1:"; then
+		by_priority && return 0
+		tc qdisc show dev "$IFB_DEV" 2>/dev/null |
+			grep -q "qdisc htb 1:" && return 0
 	fi
 
 	stop_qos "$dev"
@@ -777,6 +816,37 @@ nft_exception_rule() {
 	nft_addr_rule "$1" "$2" "$3" "$HNAT_EXCEPTION_MARK" 0
 }
 
+# The exception tag and the class in one rule. htb_classify reads skb->priority
+# before it runs any filter, so this is the whole classification: no u32 list,
+# no mirror, and the two fields do not collide because the tag lives in the
+# mark and the class in the priority.
+nft_class_rule() {
+	local dir="$1"
+	local family="$2"
+	local value="$3"
+	local classid="$4"
+	local addr
+
+	[ -n "$value" ] || return 0
+	[ -n "$classid" ] || return 0
+
+	case "$dir" in
+		up) addr="saddr" ;;
+		dl) addr="daddr" ;;
+		*) return 1 ;;
+	esac
+
+	case "$family" in
+		ip|ip6) ;;
+		*) return 1 ;;
+	esac
+
+	"$NFT" add rule "$TABLE_FAMILY" "$TABLE_NAME" "$CHAIN_NAME" \
+		"$family" "$addr" "$value" counter \
+		meta mark set "$HNAT_EXCEPTION_MARK" \
+		meta priority set "1:$classid"
+}
+
 # Uplink HQoS only engages when the egress device matches hnat_wan_if, and the
 # PPE never puts traffic bound for an external device through the QDMA
 # scheduler at all (FROM_EXT(skb) forces fqos = 0). On such a WAN - a USB
@@ -857,7 +927,7 @@ add_rule() {
 	local up_soft="${11}"
 	local dl_soft="${12}"
 	local dev="$DEV_DEFAULT"
-	local classid selector_count
+	local classid selector_count up_dev
 
 	is_uinteger "$slot" || die "queue slot must be an integer"
 	is_uinteger "$dl" || die "download rate must be an integer"
@@ -908,8 +978,13 @@ add_rule() {
 	if [ "$up_soft" = "1" ]; then
 		ensure_tc_qos "$dev" "$total_dl" "$total_up" || return 1
 		[ "$up" -ne 0 ] || up=$((total_up * 1000))
-		program_tc_class "$IFB_DEV" "$classid" "$up" "$min_up" "$weight" ||
-			return 1
+		up_dev="$(soft_up_dev)"
+		if [ -n "$up_dev" ]; then
+			program_tc_class "$up_dev" "$classid" "$up" "$min_up" \
+				"$weight" || return 1
+		else
+			echo "eqos: no device to shape upload on, slot $slot stays uncapped upstream" >&2
+		fi
 	else
 		program_queue "$(queue_from_slot "$slot" up)" "$UP_SCH" \
 			"$up" "$min_up" "$weight" || return 1
@@ -1271,6 +1346,7 @@ add_traffic_rule() {
 	local addrs="${13}"
 	local dev="$DEV_DEFAULT"
 	local up_qid dl_qid classid a v4="" v6=""
+	local up_dev
 
 	is_uinteger "$slot" || die "queue slot must be an integer"
 	is_uinteger "$dl" || die "download rate must be an integer"
@@ -1312,11 +1388,18 @@ add_traffic_rule() {
 		program_tc_class "$dev" "$classid" \
 			"$([ "$dl" -ne 0 ] && echo "$dl" || echo $((total_dl * 1000)))" \
 			"$min_dl" "$weight" || return 1
-		program_tc_class "$IFB_DEV" "$classid" \
-			"$([ "$up" -ne 0 ] && echo "$up" || echo $((total_up * 1000)))" \
-			"$min_up" "$weight" || return 1
-		tc_traffic_filters "$proto" "$ports" "$dscp" "$slot" "$classid" \
-			"$override" "$v4" || return 1
+
+		up_dev="$(soft_up_dev)"
+		[ -z "$up_dev" ] ||
+			program_tc_class "$up_dev" "$classid" \
+				"$([ "$up" -ne 0 ] && echo "$up" || echo $((total_up * 1000)))" \
+				"$min_up" "$weight" || return 1
+
+		# The nftables rules already carry the class in the priority, and a
+		# port range costs one rule there against eleven u32 filters here.
+		by_priority ||
+			tc_traffic_filters "$proto" "$ports" "$dscp" "$slot" \
+				"$classid" "$override" "$v4" || return 1
 	fi
 
 	nft_traffic_rule dl "$proto" "$ports" "$dscp" "$dl_qid" "$classid" \
@@ -1349,10 +1432,15 @@ classify_address() {
 	pref6="$(tc_pref $((TC_DEVICE_PREF_BASE6 + slot)))"
 
 	if [ "$dl_soft" = "1" ]; then
-		tc_filter_rule dl ip "$ip4" "$pref" "$classid" "$dev" || return 1
-		tc_filter_rule dl ip6 "$ip6" "$pref6" "$classid" "$dev" || return 1
-		nft_exception_rule dl ip "$ip4" || return 1
-		nft_exception_rule dl ip6 "$ip6" || return 1
+		if by_priority; then
+			nft_class_rule dl ip "$ip4" "$classid" || return 1
+			nft_class_rule dl ip6 "$ip6" "$classid" || return 1
+		else
+			tc_filter_rule dl ip "$ip4" "$pref" "$classid" "$dev" || return 1
+			tc_filter_rule dl ip6 "$ip6" "$pref6" "$classid" "$dev" || return 1
+			nft_exception_rule dl ip "$ip4" || return 1
+			nft_exception_rule dl ip6 "$ip6" || return 1
+		fi
 	else
 		qid="$(queue_from_slot "$slot" dl)"
 		nft_mark_rule dl ip "$ip4" "$qid" || return 1
@@ -1360,10 +1448,18 @@ classify_address() {
 	fi
 
 	if [ "$up_soft" = "1" ]; then
-		tc_filter_rule up ip "$ip4" "$pref" "$classid" "$dev" || return 1
-		tc_filter_rule up ip6 "$ip6" "$pref6" "$classid" "$dev" || return 1
-		nft_exception_rule up ip "$ip4" || return 1
-		nft_exception_rule up ip6 "$ip6" || return 1
+		if by_priority; then
+			# No upload class exists when upload is shaped in hardware, so
+			# pointing at one would leave the packet in the default class.
+			[ -n "$(soft_up_dev)" ] || return 0
+			nft_class_rule up ip "$ip4" "$classid" || return 1
+			nft_class_rule up ip6 "$ip6" "$classid" || return 1
+		else
+			tc_filter_rule up ip "$ip4" "$pref" "$classid" "$dev" || return 1
+			tc_filter_rule up ip6 "$ip6" "$pref6" "$classid" "$dev" || return 1
+			nft_exception_rule up ip "$ip4" || return 1
+			nft_exception_rule up ip6 "$ip6" || return 1
+		fi
 	else
 		qid="$(queue_from_slot "$slot" up)"
 		nft_mark_rule up ip "$ip4" "$qid" || return 1

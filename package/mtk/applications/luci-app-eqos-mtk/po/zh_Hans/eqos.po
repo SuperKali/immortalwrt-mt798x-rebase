@@ -80,6 +80,9 @@ msgstr "CS6，网络控制"
 msgid "Cameras"
 msgstr "摄像头"
 
+msgid "Classification"
+msgstr "分类方式"
+
 msgid "Critical"
 msgstr "最高"
 
@@ -179,6 +182,9 @@ msgstr "硬件队列"
 msgid "High"
 msgstr "高"
 
+msgid "How a packet finds its queue when shaping runs in software. In the packet the firewall writes the queue into the packet itself and the scheduler reads it straight away, which is the cheaper path on a router with few cores. Mirrored copies every frame onto a second device and walks a list of filters on both, which is what earlier versions did."
+msgstr "软件限速时数据包如何找到自己的队列。写入包内表示由防火墙把队列直接写进数据包，调度器随即读取，在核心数不多的路由器上开销更小。镜像方式会把每一帧复制到另一个设备，并在两边各走一遍过滤器列表，这是早期版本的做法。"
+
 msgid "How many packets a flow has to carry before the accelerator takes it over. The service writes the same value to the turboacc configuration."
 msgstr "一条流需要传输多少个数据包后才由加速引擎接管。服务会把同一取值写入 turboacc 配置。"
 
@@ -190,6 +196,9 @@ msgstr "MAC 地址"
 
 msgid "IPv6 address"
 msgstr "MAC 地址"
+
+msgid "In the packet"
+msgstr "写入包内"
 
 msgid "IoT"
 msgstr "物联网"
@@ -241,6 +250,9 @@ msgstr "匹配方式"
 
 msgid "Matches"
 msgstr "匹配"
+
+msgid "Mirrored"
+msgstr "镜像"
 
 msgid "Monday"
 msgstr "星期一"

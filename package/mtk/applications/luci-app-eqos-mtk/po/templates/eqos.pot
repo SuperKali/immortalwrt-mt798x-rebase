@@ -73,6 +73,9 @@ msgstr ""
 msgid "Cameras"
 msgstr ""
 
+msgid "Classification"
+msgstr ""
+
 msgid "Critical"
 msgstr ""
 
@@ -172,6 +175,9 @@ msgstr ""
 msgid "High"
 msgstr ""
 
+msgid "How a packet finds its queue when shaping runs in software. In the packet the firewall writes the queue into the packet itself and the scheduler reads it straight away, which is the cheaper path on a router with few cores. Mirrored copies every frame onto a second device and walks a list of filters on both, which is what earlier versions did."
+msgstr ""
+
 msgid "How many packets a flow has to carry before the accelerator takes it over. The service writes the same value to the turboacc configuration."
 msgstr ""
 
@@ -182,6 +188,9 @@ msgid "IPv4 address"
 msgstr ""
 
 msgid "IPv6 address"
+msgstr ""
+
+msgid "In the packet"
 msgstr ""
 
 msgid "IoT"
@@ -233,6 +242,9 @@ msgid "Match"
 msgstr ""
 
 msgid "Matches"
+msgstr ""
+
+msgid "Mirrored"
 msgstr ""
 
 msgid "Monday"

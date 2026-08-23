@@ -61,6 +61,14 @@ return view.extend({
 		o.value('none', _('none'));
 		o.rmempty = true;
 
+		o = s.taboption('advanced', form.ListValue, 'classifier',
+			_('Classification'),
+			_('How a packet finds its queue when shaping runs in software. In the packet the firewall writes the queue into the packet itself and the scheduler reads it straight away, which is the cheaper path on a router with few cores. Mirrored copies every frame onto a second device and walks a list of filters on both, which is what earlier versions did.'));
+		o.value('priority', _('In the packet'));
+		o.value('filters', _('Mirrored'));
+		o.default = 'priority';
+		o.rmempty = false;
+
 		o = s.taboption('advanced', form.Value, 'min_floor',
 			_('Floor for queues with no guarantee'),
 			_('Speed in kbit/s a queue keeps when it asked for no guarantee and everything else is busy. Raise it to stop low priority devices from being squeezed to nothing, lower it to give the high priority ones more room.'));

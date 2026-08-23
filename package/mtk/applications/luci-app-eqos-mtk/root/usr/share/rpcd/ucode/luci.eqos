@@ -366,7 +366,7 @@ const hex2dec = (str) => {
  * mark, so neither the mark rules nor the PPE can account for it. Its class on
  * the shaper can: every packet of it passes through. Upload is shaped on the
  * ingress mirror, download on the bridge itself. */
-const parse_tc_classes = (dev) => {
+const parse_tc_classes = (dev, catch_all) => {
 	if (!dev)
 		return {};
 
@@ -402,12 +402,20 @@ const parse_tc_classes = (dev) => {
 			continue;
 
 		let slot = hex2dec(parts[1]);
-		if (slot <= 0 || slot == TC_LOCAL_CLASSID ||
-		    slot == WAN_DEFAULT_CLASSID || slot == 1)
+		if (slot <= 0 || slot == TC_LOCAL_CLASSID || slot == 1)
 			continue;
 
-		if (slot == TC_DEFAULT_CLASSID)
+		/* Which class collects what no rule claimed depends on the device:
+		 * the bridge and the mirror keep it in the default class, the WAN
+		 * device in its own. Only the one that is actually the catch-all here
+		 * becomes the global queue, the other is the aggregate of everything
+		 * and would count every packet a second time. */
+		if (slot == WAN_DEFAULT_CLASSID || slot == TC_DEFAULT_CLASSID) {
+			if (slot != catch_all)
+				continue;
+
 			slot = GLOBAL_UP_QID;
+		}
 
 		out[slot] = {
 			bytes: int(c.stats ? c.stats.bytes : 0),
@@ -550,9 +558,17 @@ const methods = {
 
 			/* Where a shaper owns a queue it has seen every packet of it, so
 			 * it replaces both other sources rather than adding to them. */
+			/* Upload is shaped on the mirror when there is one, and on the
+			 * WAN device itself otherwise. */
+			let up_classes = parse_tc_classes(IFB_DEV, TC_DEFAULT_CLASSID);
+			if (!length(up_classes))
+				up_classes = parse_tc_classes(safe_device(slurp(WAN_STATE)),
+					WAN_DEFAULT_CLASSID);
+
 			let soft = {
-				up: parse_tc_classes(IFB_DEV),
-				down: parse_tc_classes(safe_device(slurp(LAN_STATE)))
+				up: up_classes,
+				down: parse_tc_classes(safe_device(slurp(LAN_STATE)),
+					TC_DEFAULT_CLASSID)
 			};
 
 			let drops = {};

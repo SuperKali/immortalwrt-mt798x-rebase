@@ -126,6 +126,11 @@ done
 # The limits quoted in the comments must be the ones in the code.
 ok "il commento cita la base software giusta" \
 	"$(grep -c "64 and above\|64 upwards" "$DEF")" 2
+# La modalita' di serie citata nel commento e quella del codice devono
+# coincidere: chi legge il file di configurazione non ha altro modo di saperlo.
+ok "il classificatore di serie e' quello documentato" \
+	"$(sed -n 's/^TC_CLASSIFY_DEFAULT="\(.*\)"$/\1/p' "$ROOT/root/usr/sbin/eqos")" \
+	"$(grep -c "priority unless set" "$DEF" | sed 's/^1$/priority/')"
 ok "SOFT_SLOT_BASE e' davvero 64" \
 	"$(sed -n 's/^SOFT_SLOT_BASE=//p' "$ROOT/root/etc/init.d/eqos")" 64
 # Every section type the service enumerates must appear in the file.

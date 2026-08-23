@@ -29,6 +29,12 @@ config eqos 'config'
 #              round robin, 1 to 15. What counts is the distance between
 #              them: 15 against 1 gives a critical queue fifteen times the
 #              share of a low one. Strict priority ignores them.
+# classifier:  how a packet finds its class when shaping runs in software.
+#              priority lets the firewall write the class into the packet,
+#              which the scheduler reads before any filter, so no traffic is
+#              mirrored and no filter list is walked. filters is the older
+#              path: LAN ingress is mirrored onto an IFB device and both
+#              devices carry a list of filters. priority unless set.
 # refresh_interval:
 #              seconds between two looks at the neighbour table, 60 unless
 #              set, 10 at the least, 0 to stop looking. A host takes a new
@@ -44,6 +50,7 @@ config eqos 'config'
 	option lan_device    'br-lan'
 #	option aqm           'auto'
 #	option min_floor     128
+#	option classifier    'priority'
 #	option weight_critical 15
 #	option weight_high      8
 #	option weight_normal    4

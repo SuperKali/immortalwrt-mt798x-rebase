@@ -1168,6 +1168,16 @@ start_service() {
 			;;
 	esac
 
+	local classifier
+	config_get classifier config classifier priority
+	case "$classifier" in
+		priority|filters) ;;
+		*)
+			echo "eqos: classifier must be priority or filters" >&2
+			return 1
+			;;
+	esac
+
 	LAN_DEVICE="$lan_device"
 	DOWNLOAD_SOFT=0
 	if download_shaper_needed "$download_mode"; then

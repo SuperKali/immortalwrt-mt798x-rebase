@@ -11,7 +11,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TARGET="${1:-root@192.168.7.1}"
+TARGET="${1:-root@192.168.31.9}"
 SSH="ssh -o StrictHostKeyChecking=no -o ConnectTimeout=8 $TARGET"
 PASS=0
 FAIL=0
@@ -169,7 +169,8 @@ ok "due regole catch-all" "$(printf '%s\n' "$GLOB" | grep -c 'counter')" 2
 echo
 echo "== classi tc =="
 DL="$(r 'tc class show dev br-lan 2>/dev/null')"
-UP="$(r 'tc class show dev ifb-eqos 2>/dev/null')"
+WANDEV="$(r 'cat /var/run/eqos.wan 2>/dev/null')"
+UP="$(r "tc class show dev ${WANDEV:-nessuno} 2>/dev/null")"
 ok "radice download al totale" \
 	"$(printf '%s\n' "$DL" | grep -c 'class htb 1:1 root rate 100Mbit')" 1
 ok "radice upload al totale" \
@@ -208,22 +209,27 @@ ok "nessuna classe rimasta al burst minimo in download" \
 		grep -c 'burst 1600b')" 0
 
 echo
-echo "== filtri tc =="
-F="$(r 'tc filter show dev ifb-eqos parent 1: 2>/dev/null')"
-ok "esenzione LAN locale su pref 1 e 2" \
-	"$(printf '%s\n' "$F" | grep -cE 'pref (1|2) ')" \
-	"$(printf '%s\n' "$F" | grep -cE 'pref (1|2) ')"
-# Without override, service filters sit in the high band and are read after
-# the per-device ones.
-has "filtri delle regole di servizio, IPv4" \
-	"$(printf '%s\n' "$F" | grep -c 'protocol ip pref 3[0-9][0-9][0-9][0-9] ')" 10
-has "filtri delle regole di servizio, IPv6" \
-	"$(printf '%s\n' "$F" | grep -c 'protocol ipv6 pref 4[0-9][0-9][0-9][0-9] ')" 10
-has "filtri per dispositivo sopra quelli di traffico" \
-	"$(printf '%s\n' "$F" | grep -c 'pref 10[0-9][0-9] ')" 4
-ok "nessuna preferenza con due protocolli" \
-	"$(printf '%s\n' "$F" | sed -n 's/.*protocol \([a-z0-9]*\) pref \([0-9]*\).*/\2 \1/p' |
-		sort -u | awk '{print $1}' | uniq -d | wc -l | tr -d ' ')" 0
+echo "== classificazione nel pacchetto =="
+# Di serie la classe la scrive il firewall dentro il pacchetto, e lo scheduler
+# la legge prima di far girare un filtro. Niente specchio, niente redirect,
+# nessuna lista da attraversare.
+ok "nessun dispositivo specchio" \
+	"$(r 'ip link show ifb-eqos >/dev/null 2>&1 && echo presente || echo assente')" assente
+ok "nessuna qdisc di ingresso sul bridge" \
+	"$(r 'tc qdisc show dev br-lan | grep -c ingress')" 0
+ok "nessun filtro sul bridge" \
+	"$(r 'tc filter show dev br-lan 2>/dev/null | grep -c flowid')" 0
+ok "nessun filtro sul dispositivo WAN" \
+	"$(r "tc filter show dev ${WANDEV:-nessuno} 2>/dev/null | grep -c flowid")" 0
+# Ogni dispositivo limitato via software porta il tag di esclusione e la classe
+# nella stessa regola: i due campi non si pestano i piedi.
+ok "ogni regola per dispositivo porta tag e classe" \
+	"$(r 'nft list chain inet eqos forward 2>/dev/null |
+		grep -c "meta mark set 0x00000099 meta priority set"')" 8
+ok "le classi di upload stanno dove escono i pacchetti" \
+	"$(printf '%s\n' "$UP" | grep -c 'class htb')" 7
+ok "il catch-all di upload e' quello del dispositivo WAN" \
+	"$(printf '%s\n' "$UP" | grep -c 'class htb 1:fffe ')" 1
 
 echo
 echo "== rpc =="
@@ -262,8 +268,8 @@ ok "l'indirizzo nuovo finisce nello stato" \
 	"$(r 'grep -c fd09:e405:1::1 /var/run/eqos.v6')" 1
 ok "l'indirizzo nuovo ha le sue regole nftables" \
 	"$(r 'nft list table inet eqos | grep -c fd09:e405:1::1')" 2
-ok "l'indirizzo nuovo ha un filtro per direzione" \
-	"$(r "tc filter show dev br-lan | grep -c 'pref $((20000 + V6SLOT)) .*flowid'")" 1
+ok "l'indirizzo nuovo ha una regola per direzione" \
+	"$(r 'nft list chain inet eqos forward | grep -c "fd09:e405:1::1 counter"')" 2
 # Two rounds must not double anything, and the address list must not grow.
 r '/etc/init.d/eqos refresh' >/dev/null 2>&1
 ok "il secondo giro non raddoppia le regole" \
@@ -376,23 +382,46 @@ echo "== le regole di servizio non svuotano i limiti dei dispositivi =="
 ok "di serie ogni regola rispetta il tag del dispositivo" \
 	"$(r 'nft list chain inet eqos forward 2>/dev/null |
 		grep "meta priority set" | grep -vc "0x00000099"')" 0
-ok "e i suoi filtri sono letti dopo quelli dei dispositivi" \
-	"$(r 'tc filter show dev ifb-eqos parent 1: 2>/dev/null |
-		sed -n "s/.*pref \([0-9]*\).*/\1/p" | sort -un |
-		awk "\$1>=100 && \$1<1000" | wc -l | tr -d " "')" 0
+has "e la guardia c'e' su quelle che la classe la scrivono" \
+	"$(r 'nft list chain inet eqos forward 2>/dev/null |
+		grep -c "meta mark != 0x00000099 counter.*meta priority set"')" 1
 ok "con override la guardia sparisce" \
 	"$(r 'uci -q set eqos.tvoip.override=1; uci -q commit eqos
 		/etc/init.d/eqos restart >/dev/null 2>&1; sleep 2
 		nft list chain inet eqos forward 2>/dev/null |
 			grep "meta priority set" | grep -vc "0x00000099"' | tail -1)" 6
-ok "e i filtri passano davanti" \
-	"$(r 'tc filter show dev ifb-eqos parent 1: 2>/dev/null |
-		sed -n "s/.*pref \([0-9]*\).*/\1/p" | sort -un |
-		awk "\$1>=100 && \$1<1000" | wc -l | tr -d " "')" 2
+ok "e la regola resta comunque dopo quelle dei dispositivi" \
+	"$(r 'nft --handle list chain inet eqos forward 2>/dev/null |
+		awk "/meta mark set 0x00000099/ { d = \$NF } /meta priority set/ && !/0x00000099/ { t = \$NF }
+		     END { print (t > d) ? \"si\" : \"no\" }"')" si
 ok "e senza tetto proprio arriva l'avviso" \
 	"$(r 'grep -c "no ceiling of its own" /var/run/eqos.warn 2>/dev/null')" 1
 r 'uci -q delete eqos.tvoip.override; uci -q commit eqos
 	/etc/init.d/eqos restart >/dev/null 2>&1' >/dev/null 2>&1
+
+echo
+echo "== la vecchia strada con lo specchio =="
+# Chi vuole confrontare le due deve poter tornare indietro, e la strada
+# precedente deve continuare a montarsi per intero.
+r 'uci -q set eqos.config.classifier=filters; uci -q commit eqos
+	/etc/init.d/eqos restart >/dev/null 2>&1; sleep 3' >/dev/null 2>&1
+ok "lo specchio torna" \
+	"$(r 'ip link show ifb-eqos >/dev/null 2>&1 && echo presente || echo assente')" presente
+ok "e la qdisc di ingresso con lui" \
+	"$(r 'tc qdisc show dev br-lan | grep -c ingress')" 1
+ok "le classi di upload tornano sullo specchio" \
+	"$(r 'tc class show dev ifb-eqos 2>/dev/null | grep -c "class htb"')" 8
+has "e i filtri per dispositivo con loro" \
+	"$(r 'tc filter show dev ifb-eqos parent 1: 2>/dev/null | grep -c "pref 10[0-9][0-9] "')" 4
+ok "il dispositivo WAN torna a una classe sola oltre la radice" \
+	"$(r "tc class show dev ${WANDEV:-nessuno} 2>/dev/null | grep -c 'class htb'")" 2
+ok "le regole non portano piu' la classe nel pacchetto" \
+	"$(r 'nft list chain inet eqos forward 2>/dev/null |
+		grep -c "meta mark set 0x00000099 meta priority set"')" 0
+r 'uci -q set eqos.config.classifier=priority; uci -q commit eqos
+	/etc/init.d/eqos restart >/dev/null 2>&1; sleep 3' >/dev/null 2>&1
+ok "e si torna indietro" \
+	"$(r 'ip link show ifb-eqos >/dev/null 2>&1 && echo presente || echo assente')" assente
 
 printf '\n%d superati, %d falliti\n' "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ]
