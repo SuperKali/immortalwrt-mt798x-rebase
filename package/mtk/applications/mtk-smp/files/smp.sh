@@ -239,12 +239,27 @@ MT7981_whnat()
 		CPU0_RPS="$ethif1 $ethif2 $wifi1 $wifi1_apcli0"
 		CPU1_RPS="                $wifi1 $wifi1_apcli0"
 	elif [ "$num_of_wifi" = "2" ]; then
-		CPU0_AFFINITY="$eth_tx $eth_rx0"
-		CPU1_AFFINITY="$wifi1_irq $wifi2_irq $usb"
+		if [ "$is_usbnet" = "1" ]; then
+			# A USB WAN is not a PSE port, so every packet crosses the
+			# CPU twice: once on the ext device and once on the PPD
+			# bounce into the PPE. Split by direction so no core takes
+			# both halves of the same flow. CPU0 gets Wi-Fi RX and the
+			# ethernet path, which is the upload chain; CPU1 gets the
+			# modem, which is the download chain.
+			CPU0_AFFINITY="$eth_tx $eth_rx0 $wifi1_irq $wifi2_irq"
+			CPU1_AFFINITY="$usb"
 
-		CPU0_RPS="$ethif1 $ethif2 $wifi1 $wifi2 $wifi1_apcli0 $wifi2_apcli0"
-		CPU1_RPS="                $wifi1 $wifi2 $wifi1_apcli0 $wifi2_apcli0"
-		[ "$is_usbnet" = "1" ] && CPU1_RPS="$wifi1_apcli0 $wifi2_apcli0"
+			# No RPS on the data path: it would only pull packets back
+			# onto the core the other direction is already using.
+			CPU0_RPS="$wifi1_apcli0 $wifi2_apcli0"
+			CPU1_RPS="$wifi1_apcli0 $wifi2_apcli0"
+		else
+			CPU0_AFFINITY="$eth_tx $eth_rx0"
+			CPU1_AFFINITY="$wifi1_irq $wifi2_irq $usb"
+
+			CPU0_RPS="$ethif1 $ethif2 $wifi1 $wifi2 $wifi1_apcli0 $wifi2_apcli0"
+			CPU1_RPS="                $wifi1 $wifi2 $wifi1_apcli0 $wifi2_apcli0"
+		fi
 	elif [ "$num_of_wifi" = "3" ]; then
 		CPU0_AFFINITY="$eth_tx $eth_rx0"
 		CPU1_AFFINITY="$PCIe0 $wifi1_irq $wifi2_irq $wifi3_irq $usb"
@@ -919,6 +934,25 @@ set_rps_cpus()
 	done
 }
 
+# Disable GRO fraglist (rx-gro-list) on software-path netdevs.
+# usbnet/wwan modems are pure SW-path devices (no hardware GRO); the
+# fraglist-GRO coalescing adds per-packet CPU overhead that lowers peak
+# software forwarding throughput. Turning it off is a small, safe CPU win.
+# Mirrors padavanonly's disable_gro_fraglist. No-op if ethtool is absent.
+disable_gro_fraglist()
+{
+	command -v ethtool >/dev/null 2>&1 || return
+	for dev in /sys/class/net/*; do
+		[ -d "$dev" ] || continue
+		iface=$(basename "$dev")
+		case "$iface" in
+			lo|br-*|bond*|*.*) continue ;;
+		esac
+		ethtool -K "$iface" rx-gro-list off >/dev/null 2>&1
+		dbg "ethtool -K $iface rx-gro-list off"
+	done
+}
+
 set_smp_affinity()
 {
 	dbg2 "# Setup affinity of each physical irq."
@@ -978,4 +1012,5 @@ setup_model
 set_rps_cpu_bitmap
 set_rps_cpus $DEFAULT_RPS
 set_smp_affinity
+disable_gro_fraglist
 #end of file
