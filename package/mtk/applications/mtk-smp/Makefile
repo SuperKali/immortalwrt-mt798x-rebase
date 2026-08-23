@@ -5,7 +5,7 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mtk-smp
-PKG_RELEASE:=3
+PKG_RELEASE:=2
 PKG_LICENSE:=GPL-2.0
 
 include $(INCLUDE_DIR)/package.mk
@@ -25,8 +25,6 @@ define Package/mtk-smp/install
 	$(INSTALL_DIR) $(1)/etc/init.d
 	$(INSTALL_BIN) ./files/smp.sh $(1)/sbin/
 	$(INSTALL_BIN) ./files/mtk_smp.init $(1)/etc/init.d/mtk_smp
-	$(INSTALL_DIR) $(1)/etc/hotplug.d/net
-	$(INSTALL_BIN) ./files/30-mtk-smp-rerun $(1)/etc/hotplug.d/net/30-mtk-smp-rerun
 endef
 
 $(eval $(call BuildPackage,mtk-smp))

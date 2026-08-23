@@ -2,11 +2,7 @@
 
 NPROCS="$(grep -c "^processor.*:" /proc/cpuinfo)"
 case "$NPROCS" in
-    # On a dual core board CPU0 already carries the ethernet interrupts,
-    # so steering the modem there too leaves CPU1 idle and serialises the
-    # whole forwarding path. Keep the packet on the core that took the
-    # interrupt instead.
-    2) RPS_CPUS=0 ;;
+    2) RPS_CPUS=1 ;; # set to CPU0
     4) RPS_CPUS=8 ;; # set to CPU3
     *) exit ;;
 esac
