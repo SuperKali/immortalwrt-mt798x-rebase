@@ -1,9 +1,15 @@
 ---
-[v1] net: ethernet: mtk_ppe: add roaming handler
+[v2] net: ethernet: mtk_ppe: add roaming handler
 
 Without this patch, the traffic may stop over 30 seconds when the
 WiFi roams.
 ---
+v2: Replace mtk_flow_offload_teardown_by_roaming() with
+    flow_offload_teardown_by_mac(). The old helper derived the 5-tuples from
+    the PPE bind entries, so flows that were never bound to hardware were
+    left behind and kept using the client's previous output port. Walking the
+    software flowtables by destination MAC instead covers both bound and
+    unbound flows.
 v1: Add PPE roaming handler to delete the PPE BIND entry related to the
     WiFi roaming station.
 ---
@@ -16,10 +22,12 @@ Subject: [PATCH] net: ethernet: mtk_ppe: add roaming handler
 Without this patch, the traffic may stop over 30 seconds when the
 WiFi roams.
 ---
- drivers/net/ethernet/mediatek/mtk_ppe.c       | 211 ++++++++++++++++++
+ drivers/net/ethernet/mediatek/mtk_ppe.c       | 115 +++++++++++++++++++
  drivers/net/ethernet/mediatek/mtk_ppe.h       |   2 +
- .../net/ethernet/mediatek/mtk_ppe_debugfs.c   |  56 +++++
- 3 files changed, 269 insertions(+)
+ .../net/ethernet/mediatek/mtk_ppe_debugfs.c   |  56 +++++++++
+ include/net/netfilter/nf_flow_table.h         |   1 +
+ net/netfilter/nf_flow_table_core.c            |  39 +++++++
+ 5 files changed, 213 insertions(+)
 
 --- a/drivers/net/ethernet/mediatek/mtk_ppe.c
 +++ b/drivers/net/ethernet/mediatek/mtk_ppe.c
@@ -31,112 +39,10 @@ WiFi roams.
  
  #include "mtk_eth_soc.h"
  #include "mtk_ppe.h"
-@@ -525,6 +526,28 @@ mtk_flow_entry_match(struct mtk_eth *eth
- 	return !memcmp(&entry->data.data, &data->data, len - 4);
- }
- 
-+static bool mtk_foe_mac_match(struct mtk_foe_entry *entry, u8 *mac)
-+{
-+	int type;
-+
-+	type = FIELD_GET(MTK_FOE_IB1_PACKET_TYPE, entry->ib1);
-+	if (type > MTK_PPE_PKT_TYPE_IPV4_DSLITE) {
-+		if(((swab32(entry->ipv6.l2.dest_mac_hi) == *(u32 *)mac) &&
-+		    (swab16(entry->ipv6.l2.dest_mac_lo) == *(u16 *)&mac[4])) ||
-+		   ((swab32(entry->ipv6.l2.src_mac_hi) == *(u32 *)mac) &&
-+		    (swab16(entry->ipv6.l2.src_mac_lo) == *(u16 *)&mac[4])))
-+			return true;
-+	} else {
-+		if(((swab32(entry->ipv4.l2.dest_mac_hi) == *(u32 *)mac) &&
-+		    (swab16(entry->ipv4.l2.dest_mac_lo) == *(u16 *)&mac[4])) ||
-+		   ((swab32(entry->ipv4.l2.src_mac_hi) == *(u32 *)mac) &&
-+		    (swab16(entry->ipv4.l2.src_mac_lo) == *(u16 *)&mac[4])))
-+			return true;
-+	}
-+
-+	return false;
-+}
-+
- static void
- __mtk_foe_entry_clear(struct mtk_ppe *ppe, struct mtk_flow_entry *entry,
- 		      bool set_state)
-@@ -1164,3 +1187,191 @@ int mtk_ppe_stop(struct mtk_ppe *ppe)
+@@ -1164,3 +1165,117 @@ int mtk_ppe_stop(struct mtk_ppe *ppe)
  
  	return 0;
  }
-+
-+static int
-+mtk_ppe_check_wdma_path(struct mtk_eth *eth, struct mtk_foe_entry *foe)
-+{
-+	u32 sp, winfo;
-+	u32 *ib2;
-+
-+	ib2 = mtk_foe_entry_ib2(eth, foe);
-+	sp = mtk_get_ib1_sp(eth, foe);
-+	winfo = FIELD_GET(MTK_FOE_IB2_WDMA_WINFO, *ib2);
-+
-+	if (winfo || (sp == PSE_WDMA0_PORT ||
-+		      sp == PSE_WDMA1_PORT ||
-+		      sp == PSE_WDMA2_PORT))
-+		return 1;
-+
-+	return 0;
-+}
-+
-+static int
-+mtk_flow_offload_teardown_by_roaming(struct mtk_ppe *ppe, u8 *mac)
-+{
-+	int i, j, count = 0;
-+
-+	if (!ppe)
-+		return 0;
-+
-+	for (i = 0; i < MTK_PPE_ENTRIES; i++) {
-+		struct mtk_foe_entry *entry = mtk_foe_get_entry(ppe, i);
-+		struct flow_offload_tuple tuple;
-+		int type, state;
-+
-+		state = FIELD_GET(MTK_FOE_IB1_STATE, entry->ib1);
-+		if (state != MTK_FOE_STATE_BIND || !mtk_foe_mac_match(entry, mac) ||
-+		    !mtk_ppe_check_wdma_path(ppe->eth, entry))
-+			continue;
-+
-+		memset(&tuple, 0, sizeof(tuple));
-+
-+		if (entry->ib1 & MTK_FOE_IB1_UDP)
-+			tuple.l4proto = IPPROTO_UDP;
-+		else
-+			tuple.l4proto = IPPROTO_TCP;
-+
-+		type = FIELD_GET(MTK_FOE_IB1_PACKET_TYPE, entry->ib1);
-+		if (type > MTK_PPE_PKT_TYPE_IPV4_DSLITE) {
-+			tuple.l3proto = NFPROTO_IPV6;
-+			tuple.src_port = htons(entry->ipv6.src_port);
-+			tuple.dst_port = htons(entry->ipv6.src_port);
-+			for (j = 0; j < 4; j ++) {
-+				tuple.src_v6.s6_addr32[j] = htonl(entry->ipv6.src_ip[j]);
-+				tuple.dst_v6.s6_addr32[j] = htonl(entry->ipv6.dest_ip[j]);
-+			}
-+		} else {
-+			tuple.l3proto = NFPROTO_IPV4;
-+			tuple.src_port = htons(entry->ipv4.orig.src_port);
-+			tuple.dst_port = htons(entry->ipv4.orig.dest_port);
-+			tuple.src_v4.s_addr = htonl(entry->ipv4.orig.src_ip);
-+			tuple.dst_v4.s_addr = htonl(entry->ipv4.orig.dest_ip);
-+		}
-+
-+		flow_offload_teardown_by_tuple(&tuple);
-+		count++;
-+
-+		pr_info("mtk_ppe: the roamiing entry (%x) has been deleted\n", i);
-+	}
-+
-+	if (!count && ppe->eth->debug_level >= 4)
-+		pr_warn("mtk_ppe: the roaming entry was not found in the PPE(%d)\n",
-+			ppe->index);
-+
-+	return count;
-+}
 +
 +static void mtk_ppe_roam_handler(struct work_struct *work)
 +{
@@ -147,7 +53,7 @@ WiFi roams.
 +	struct nlmsghdr *nlh;
 +	struct ndmsg *ndm;
 +	struct nlattr *nla;
-+	int len, ifindex, i;
++	int len, ifindex;
 +	u8 mac[ETH_ALEN];
 +
 +	if (!eth->ppe_roam_sock)
@@ -184,8 +90,7 @@ WiFi roams.
 +	while (nla_ok(nla, len)) {
 +		if (nla_type(nla) == NDA_LLADDR) {
 +			memcpy(mac, nla_data(nla), ETH_ALEN);
-+			for (i = 0; i < ARRAY_SIZE(eth->ppe); i++)
-+				mtk_flow_offload_teardown_by_roaming(eth->ppe[i], mac);
++			flow_offload_teardown_by_mac(mac);
 +			if (eth->debug_level >= 6)
 +				pr_info("mtk_ppe: the neighbor (%pM) has been updated\n", mac);
 +		}
@@ -335,3 +240,61 @@ WiFi roams.
  
  	for (i = 0; i < (mtk_is_netsys_v2_or_greater(eth) ? 4 : 2); i++) {
  		ret = snprintf(name, sizeof(name), "qdma_sch%ld", i);
+--- a/net/netfilter/nf_flow_table_core.c
++++ b/net/netfilter/nf_flow_table_core.c
+@@ -372,6 +372,45 @@ void flow_offload_teardown_by_tuple(stru
+ }
+ EXPORT_SYMBOL_GPL(flow_offload_teardown_by_tuple);
+ 
++static void nf_flow_teardown_by_mac(struct nf_flowtable *flowtable,
++				    struct flow_offload *flow, void *data)
++{
++	const u8 *mac = data;
++	int dir;
++
++	if (test_bit(NF_FLOW_TEARDOWN, &flow->flags))
++		return;
++
++	for (dir = 0; dir < FLOW_OFFLOAD_DIR_MAX; dir++) {
++		const struct flow_offload_tuple *t = &flow->tuplehash[dir].tuple;
++
++		/* out unions with dst_cache, only valid for XMIT_DIRECT */
++		if (t->xmit_type != FLOW_OFFLOAD_XMIT_DIRECT)
++			continue;
++
++		if (ether_addr_equal(t->out.h_dest, mac)) {
++			flow_offload_teardown(flow);
++			return;
++		}
++	}
++}
++
++/* Tear down every offloaded flow destined to @mac, so the software shortcut and
++ * any hardware offload get rebuilt for the port the client has roamed to.
++ * Sleeps on flowtable_lock: process context only.
++ */
++void flow_offload_teardown_by_mac(const u8 *mac)
++{
++	struct nf_flowtable *flowtable;
++
++	mutex_lock(&flowtable_lock);
++	list_for_each_entry(flowtable, &flowtables, list)
++		nf_flow_table_iterate(flowtable, nf_flow_teardown_by_mac,
++				      (void *)mac);
++	mutex_unlock(&flowtable_lock);
++}
++EXPORT_SYMBOL_GPL(flow_offload_teardown_by_mac);
++
+ struct flow_offload_tuple_rhash *
+ flow_offload_lookup(struct nf_flowtable *flow_table,
+ 		    struct flow_offload_tuple *tuple)
+--- a/include/net/netfilter/nf_flow_table.h
++++ b/include/net/netfilter/nf_flow_table.h
+@@ -296,6 +296,7 @@ void nf_flow_table_free(struct nf_flowta
+ 
+ void flow_offload_teardown(struct flow_offload *flow);
+ void flow_offload_teardown_by_tuple(struct flow_offload_tuple *tuple);
++void flow_offload_teardown_by_mac(const u8 *mac);
+ 
+ int nf_flow_table_iterate(struct nf_flowtable *flow_table,
+                       void (*iter)(struct nf_flowtable *flowtable,

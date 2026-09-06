@@ -6,48 +6,32 @@ This repository is worked on ImmortalWrt with MTK OpenWrt Feeds patches imported
 
 ## Commit Cutoff Revisions
 
-### ImmortalWrt: [3dacd2f](https://github.com/immortalwrt/immortalwrt/commit/3dacd2fb6a48c5963b1026c6a343ec7e67cbf810)
+### ImmortalWrt: [1d34e7b](https://github.com/immortalwrt/immortalwrt/commit/1d34e7b88708d4eeb3feabe0b2b6f835a909c9c0)
 
 ```
-Merge Official Source
+mediatek: fix merge conflict
 
+Fixes: #2458
+
+Fixes: 3a0e732472ba ("Merge Official Source")
 Signed-off-by: Tianling Shen <cnsztl@immortalwrt.org>
 ```
 
-### MTK OpenWrt Feeds: [00cd776](https://git01.mediatek.com/plugins/gitiles/openwrt/feeds/mtk-openwrt-feeds/+/00cd776fc860588c1ce45d694614b065c57c986a)
+### MTK OpenWrt Feeds: [511100a](https://github.com/mediatek/mtk-openwrt-feeds/commit/511100a886cf99a12588ccbb810c70928a772027)
 
 ```
-[][kernel-6.12][common][hnat][Fix multicast forwarding issue after SER]
+[openwrt-25.12][mt7988][npu][Enable NPU L4S in autobuild defconfig]
 
 [Description]
-Fix multicast forwarding issue on MT7988 after SER by initializing
-multicast port mapping and handling multicast service. This resolves
-the forwarding path exception observed in the TOPS MC path.
-
-[Root Cause]
-The issue occurred due to uninitialized multicast port mapping after
-SER, leading to incorrect forwarding paths. The multicast service
-handling was not properly invoked, causing forwarding exceptions.
-
-[Solution]
-Invoke hnat_mcast_ser_handle during warm initialization to reset
-multicast group parameters and initialize multicast port mapping
-using hnat_mcast_mcport_ppse_map_init. This ensures correct forwarding
-path setup post-SER.
-
-[How to Verify]
-Test steps:
-1. Trigger SER on the device.
-2. Verify multicast forwarding paths are correctly set.
-3. Check multicast traffic is forwarded as expected.
-Expected: Multicast forwarding paths are correctly initialized and
-traffic is forwarded without exceptions.
+Enable NPU package and L4S support in mt798x_rfb autobuild defconfig:
+1. Add CONFIG_PACKAGE_kmod-npu=y
+2. Add CONFIG_MTK_NPU_L4S=y
+for both mt7992 and mt7996 25.12 profiles.
 
 [Info to Customer]
 N/A
 
-Change-Id: I2277d9b4bd799ae61103d3017f6574f3cf48ec94
-Reviewed-on: https://gerrit.mediatek.inc/c/openwrt/feeds/mtk_openwrt_feeds/+/12429042
+Change-Id: I124b7f93a7c068ac87cd35343039470276baaf5e
 ```
 
 ### l1parser: [081bb31](https://github.com/chasey-dev/l1parser/commit/081bb31211efc74594d25bfd1bb5811f3408a205)

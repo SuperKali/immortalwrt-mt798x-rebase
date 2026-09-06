@@ -9,11 +9,9 @@ Subject: [PATCH] net: ethernet: mtk_eth_soc: add mtkhnat driver support
  drivers/net/ethernet/mediatek/mtk_eth_soc.c | 39 +++++++++++++++++++++
  3 files changed, 64 insertions(+)
 
-diff --git a/drivers/net/ethernet/mediatek/Kconfig b/drivers/net/ethernet/mediatek/Kconfig
-index d974316..1589b36 100644
 --- a/drivers/net/ethernet/mediatek/Kconfig
 +++ b/drivers/net/ethernet/mediatek/Kconfig
-@@ -40,4 +40,28 @@ config NET_MEDIATEK_STAR_EMAC
+@@ -32,4 +32,28 @@ config NET_MEDIATEK_STAR_EMAC
  	  This driver supports the ethernet MAC IP first used on
  	  MediaTek MT85** SoCs.
  
@@ -42,22 +40,17 @@ index d974316..1589b36 100644
 +	  family.
 +
  endif #NET_VENDOR_MEDIATEK
-diff --git a/drivers/net/ethernet/mediatek/Makefile b/drivers/net/ethernet/mediatek/Makefile
-index 52848b7..96d0f74 100644
 --- a/drivers/net/ethernet/mediatek/Makefile
 +++ b/drivers/net/ethernet/mediatek/Makefile
-@@ -11,4 +11,5 @@ mtk_eth-$(CONFIG_NET_MEDIATEK_SOC_WED) += mtk_wed_debugfs.o
+@@ -11,3 +11,4 @@ mtk_eth-$(CONFIG_NET_MEDIATEK_SOC_WED) +
  endif
  obj-$(CONFIG_NET_MEDIATEK_SOC_WED) += mtk_wed_ops.o
  obj-$(CONFIG_NET_MEDIATEK_STAR_EMAC) += mtk_star_emac.o
 +obj-$(CONFIG_NET_MEDIATEK_HNAT) += mtk_hnat/
- obj-$(CONFIG_NET_AIROHA) += airoha_eth.o
-diff --git a/drivers/net/ethernet/mediatek/mtk_eth_soc.c b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-index a03baee..6784cc2 100644
 --- a/drivers/net/ethernet/mediatek/mtk_eth_soc.c
 +++ b/drivers/net/ethernet/mediatek/mtk_eth_soc.c
-@@ -40,6 +40,10 @@
- #include "mtk_eth_reset.h"
+@@ -39,6 +39,10 @@
+ #include "mtk_eth_dbg.h"
  #include "mtk_wed.h"
  
 +#if defined(CONFIG_NET_MEDIATEK_HNAT) || defined(CONFIG_NET_MEDIATEK_HNAT_MODULE)
@@ -67,7 +60,7 @@ index a03baee..6784cc2 100644
  static int mtk_msg_level = -1;
  module_param_named(msg_level, mtk_msg_level, int, 0);
  MODULE_PARM_DESC(msg_level, "Message level (-1=defaults,0=none,...,16=all)");
-@@ -2819,6 +2823,31 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
+@@ -2938,6 +2942,31 @@ static int mtk_poll_rx(struct napi_struc
  
  			skb_reserve(skb, NET_SKB_PAD + NET_IP_ALIGN);
  			skb_put(skb, pktlen);
@@ -99,7 +92,7 @@ index a03baee..6784cc2 100644
  		}
  
  		skb->dev = netdev;
-@@ -2861,8 +2890,10 @@ static int mtk_poll_rx(struct napi_struct *napi, int budget,
+@@ -2980,8 +3009,10 @@ static int mtk_poll_rx(struct napi_struc
  				skb_dst_set_noref(skb, &eth->dsa_meta[port]->dst);
  		}
  
@@ -110,7 +103,7 @@ index a03baee..6784cc2 100644
  
  		if (eth->hwlro && eth->debugfs->hwlro_stats.ebl &&
  		    IS_HW_LRO_RING(ring->ring_no)) {
-@@ -4531,6 +4562,7 @@ static int mtk_open(struct net_device *dev)
+@@ -4702,6 +4733,7 @@ static int mtk_open(struct net_device *d
  		if (err)
  			return err;
  
@@ -118,7 +111,7 @@ index a03baee..6784cc2 100644
  		for (i = 0; i < ARRAY_SIZE(eth->ppe); i++)
  			mtk_ppe_start(eth->ppe[i]);
  
-@@ -4538,6 +4570,7 @@ static int mtk_open(struct net_device *dev)
+@@ -4709,6 +4741,7 @@ static int mtk_open(struct net_device *d
  		if (err)
  			netdev_err(dev, "%s: could not start ppe roaming work: %d\n",
  				   __func__, err);
@@ -126,7 +119,7 @@ index a03baee..6784cc2 100644
  
  		for (i = 0; i < MTK_MAX_DEVS; i++) {
  			if (!eth->netdev[i])
-@@ -4718,10 +4751,12 @@ static int mtk_stop(struct net_device *dev)
+@@ -4882,10 +4915,12 @@ static int mtk_stop(struct net_device *d
  
  	mtk_dma_free(eth);
  
@@ -139,7 +132,7 @@ index a03baee..6784cc2 100644
  
  	return 0;
  }
-@@ -7222,6 +7257,7 @@ static int mtk_probe(struct platform_device *pdev)
+@@ -7396,6 +7431,7 @@ static int mtk_probe(struct platform_dev
  		};
  	}
  
@@ -147,7 +140,7 @@ index a03baee..6784cc2 100644
  	if (eth->soc->offload_version) {
  		u8 ppe_num = eth->soc->ppe_num;
  
-@@ -7246,6 +7282,7 @@ static int mtk_probe(struct platform_device *pdev)
+@@ -7420,6 +7456,7 @@ static int mtk_probe(struct platform_dev
  		if (err)
  			goto err_deinit_ppe;
  	}
@@ -155,7 +148,7 @@ index a03baee..6784cc2 100644
  
  	mtk_eth_debugfs_init(eth);
  
-@@ -7306,7 +7343,9 @@ static int mtk_probe(struct platform_device *pdev)
+@@ -7479,7 +7516,9 @@ err_unreg_netdev:
  	free_netdev(eth->dummy_dev);
  err_deinit_ppe:
  	mtk_napi_del(eth);
@@ -165,6 +158,3 @@ index a03baee..6784cc2 100644
  	mtk_release_all_muxes(eth);
  	mtk_mdio_cleanup(eth);
  err_free_dev:
--- 
-2.45.2
-
