@@ -1,0 +1,67 @@
+mtk: mt_wifi: fix band steering client table overflow
+
+CLI_ADD dereferenced the new entry without checking it, and
+BndStrg_InsertEntry() leaves it NULL when the 64-slot table is full.
+In post-connection mode the daemon adds every client on association and
+nothing ever removed it, so the 65th distinct client on a band crashed
+the kernel.
+
+Check the entry, and in post-connection mode drop it when the client
+disconnects (the daemon adds it again on the next association). An
+existing entry re-added by the daemon is marked connected instead of
+being reset to INIT.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+
+--- a/mt_wifi/embedded/ap/ap_band_steering.c
++++ b/mt_wifi/embedded/ap/ap_band_steering.c
+@@ -1285,6 +1285,17 @@ void BndStrg_UpdateEntry(PRTMP_ADAPTER pAd,
+ 	entry = BndStrg_TableLookup(table, pEntry->Addr);
+ 
+ 	if (entry) {
++		/* In post-connection mode an entry only stands for a live
++		 * connection and the daemon adds it again on the next
++		 * association. Dropping it here keeps the 64-slot table from
++		 * filling up with every client that ever connected; the daemon
++		 * cannot do it with CLI_DEL, which would kick the client if it
++		 * had already reconnected. */
++		if (!bConnStatus && table->BndStrgMode == POST_CONNECTION_STEERING) {
++			BndStrg_DeleteEntry(table, pEntry->Addr, 0xFF);
++			return;
++		}
++
+ 		if (bConnStatus)
+ 			entry->BndStrg_Sta_State = BNDSTRG_STA_ASSOC;
+ 		else
+@@ -1916,15 +1927,27 @@ INT BndStrg_MsgHandle(PRTMP_ADAPTER pAd, RTMP_IOCTL_INPUT_STRUCT *wrq, INT apidx
+ 
+ 			entry = BndStrg_TableLookup(table, cli_add->Addr);
+ 
+-		if (entry == NULL) {
++			/* BndStrg_InsertEntry() leaves entry NULL when the table
++			 * is full, and the old code dereferenced it right away. */
++			if (entry == NULL) {
+ 				BndStrg_InsertEntry(table, cli_add, &entry);
++				if (entry == NULL) {
++					MTWF_DBG(pAd, DBG_CAT_ALL, DBG_SUBCAT_ALL, DBG_LVL_WARN,
++						"BndStrg table full, "MACSTR" not added\n",
++						MAC2STR(cli_add->Addr));
++					break;
++				}
++			} else if (table->BndStrgMode != POST_CONNECTION_STEERING) {
++				entry->BndStrg_Sta_State = BNDSTRG_STA_INIT;
++				break;
++			}
++
++			/* In post-connection mode the daemon adds a client when it
++			 * associates, so the entry describes a live connection. */
+ 			if (table->BndStrgMode == POST_CONNECTION_STEERING) {
+ 				entry->bConnStatus = TRUE;
+ 				entry->BndStrg_Sta_State = BNDSTRG_STA_ASSOC;
+ 			}
+-		}
+-			else
+-				entry->BndStrg_Sta_State = BNDSTRG_STA_INIT;
+ 		}
+ 		break;
+ 

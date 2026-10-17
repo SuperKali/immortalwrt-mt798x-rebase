@@ -1,0 +1,50 @@
+mtk: mt_wifi: translate MLME message ids to band steering frame types
+
+BndStrg_CheckConnectionReq() takes the frame type from Elem->MsgType,
+which holds the id of the state machine that queued the frame:
+SYNC_FSM_PEER_PROBE_REQ (4) for probes and AUTH_FSM_PEER_AUTH_REQ (6)
+for auth. The band steering protocol and the RSSI code expect
+APMT2_PEER_PROBE_REQ (0) and APMT2_PEER_AUTH_REQ (3), so auth events
+reached the daemon with frame type 6 and no RSSI, and the daemon dropped
+them.
+
+Translate both ids. This replaces the old 042 patch, which redefined
+APMT2_PEER_PROBE_REQ as 4 and so only fixed probes.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+
+--- a/mt_wifi/embedded/ap/ap_band_steering.c
++++ b/mt_wifi/embedded/ap/ap_band_steering.c
+@@ -877,7 +877,7 @@ BOOLEAN BndStrg_CheckConnectionReq(
+ 	MLME_QUEUE_ELEM * Elem,
+ 	PEER_PROBE_REQ_PARAM * ProbeReqParam)
+ {
+-	UINT8 FrameType = Elem->MsgType;
++	UINT8 FrameType;
+ 	CHAR Rssi[4] = {0};
+ 	PBND_STRG_CLI_TABLE table = NULL;
+ 	BNDSTRG_MSG msg = { 0 };
+@@ -890,6 +890,23 @@ BOOLEAN BndStrg_CheckConnectionReq(
+ 		return FALSE;
+ 	}
+ 
++	/* The MLME state machines pass their own message ids here
++	 * (SYNC_FSM_PEER_PROBE_REQ, AUTH_FSM_PEER_AUTH_REQ), not the APMT2_*
++	 * frame types of the band steering protocol. Translate them, or every
++	 * probe and auth event reaches the daemon with a frame type it does not
++	 * know and without the RSSI that is only filled in for known types. */
++	switch (Elem->MsgType) {
++	case SYNC_FSM_PEER_PROBE_REQ:
++		FrameType = APMT2_PEER_PROBE_REQ;
++		break;
++	case AUTH_FSM_PEER_AUTH_REQ:
++		FrameType = APMT2_PEER_AUTH_REQ;
++		break;
++	default:
++		FrameType = Elem->MsgType;
++		break;
++	}
++
+ 	table = Get_BndStrgTable(pAd, wdev->func_idx);
+ 
+ 	if (!pAd->ApCfg.BndStrgBssIdx[wdev->func_idx])

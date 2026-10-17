@@ -1,0 +1,52 @@
+mtk: mt_wifi: create the band steering table on the daemon's request
+
+With channel=auto a BSS can come up before the channel is chosen.
+BndStrg_TableInit() refuses channel 0, so the band gets no table,
+BndStrg_SetInfFlags() is never called and the daemon never sees the
+interface as ready: band steering never starts. The heartbeat monitor
+leaves the same state behind when it releases and re-creates the tables.
+
+When the daemon sends a message for a BSS that is up and has a channel,
+create the missing table and mark the interface ready.
+
+This replaces the old 041 patch, which could never run: it looked for an
+uninitialized table through Get_BndStrgTable(), which only returns
+initialized ones, and it did not mark the interface ready either.
+
+Signed-off-by: SuperKali <hello@superkali.me>
+
+--- a/mt_wifi/embedded/ap/ap_band_steering.c
++++ b/mt_wifi/embedded/ap/ap_band_steering.c
+@@ -1853,6 +1853,32 @@ INT BndStrg_MsgHandle(PRTMP_ADAPTER pAd, RTMP_IOCTL_INPUT_STRUCT *wrq, INT apidx
+ 
+ 	table = Get_BndStrgTable(pAd, apidx);
+ 
++	/* With channel=auto the BSS can come up before the channel is known:
++	 * BndStrg_TableInit() then refuses channel 0, no table exists for the
++	 * band and BndStrg_SetInfFlags() is never called, so the daemon never
++	 * sees the interface as ready and never turns band steering on. The
++	 * same happens after the heartbeat monitor released and re-created the
++	 * tables. Catch up here, on the daemon's own request, once the channel
++	 * has been chosen and the interface is up. */
++	if (pAd->ApCfg.BandSteering && VALID_MBSS(pAd, apidx)) {
++		struct wifi_dev *wdev = &pAd->ApCfg.MBSSID[apidx].wdev;
++
++		if (wdev->channel && wdev->if_dev &&
++			RTMP_OS_NETDEV_STATE_RUNNING(wdev->if_dev)) {
++			if (!table) {
++				BndStrg_TableInit(pAd, apidx);
++				table = Get_BndStrgTable(pAd, apidx);
++			}
++
++			if (table && !wdev->bInfReady) {
++				MTWF_DBG(pAd, DBG_CAT_ALL, DBG_SUBCAT_ALL, DBG_LVL_WARN,
++					"BndStrg late init: %s ch=%d apidx=%d\n",
++					wdev->if_dev->name, wdev->channel, apidx);
++				BndStrg_SetInfFlags(pAd, wdev, table, TRUE);
++			}
++		}
++	}
++
+ 	if (!table || (table->bInitialized == FALSE)) {
+ 		MTWF_DBG(pAd, DBG_CAT_ALL, DBG_SUBCAT_ALL, DBG_LVL_WARN,
+ 						  "BND_STRG_NOT_INITIALIZED on apidex[%d]!\n", apidx);
