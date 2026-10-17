@@ -1,15 +1,6 @@
 --- a/drivers/net/ethernet/mediatek/mtk_ppe_offload.c
 +++ b/drivers/net/ethernet/mediatek/mtk_ppe_offload.c
-@@ -357,7 +357,7 @@
- 	}
- 
- 	/* Prevent the L4S packet enter QDMA repeatedly */
--	if (eth->l4s_toggle && idev->ieee80211_ptr) {
-+	if (eth->l4s_toggle && idev && idev->ieee80211_ptr) {
- 		/* Set the original destination port to tops entry */
- 		mtk_foe_entry_set_tops_entry(eth, foe, pse_port);
- 		pse_port = PSE_TDMA_PORT;
-@@ -646,7 +646,7 @@
+@@ -673,7 +673,7 @@
  		}
  	}
  
@@ -18,21 +9,16 @@
  		/* IPv4 packets arriving from a 464xlat device are 6-to-4 (XLAT64),
  		 * IPv6 packets arriving from a 464xlat device are 4-to-6 (XLAT46).
  		 */
-@@ -875,6 +875,18 @@
+@@ -904,6 +904,13 @@
  {
  	int err;
  
-+	/* When CONFIG_NET_MEDIATEK_HNAT is built as module, the in-kernel PPE
-+	 * offload init (rhashtable_init for flow_table) is skipped, but
-+	 * ndo_setup_tc still points here. Bail out if flow_table was never
-+	 * initialized or has been destroyed.
++	/* When CONFIG_NET_MEDIATEK_HNAT is enabled, the in-kernel PPE offload
++	 * init (rhashtable_init for flow_table) is skipped, but ndo_setup_tc
++	 * still points here. Bail out if flow_table was never initialized.
 +	 */
-+	rcu_read_lock();
-+	if (!rcu_access_pointer(eth->flow_table.tbl)) {
-+		rcu_read_unlock();
++	if (!rcu_access_pointer(eth->flow_table.tbl))
 +		return -EOPNOTSUPP;
-+	}
-+	rcu_read_unlock();
 +
  	mutex_lock(&mtk_flow_offload_mutex);
  	switch (cls->command) {
