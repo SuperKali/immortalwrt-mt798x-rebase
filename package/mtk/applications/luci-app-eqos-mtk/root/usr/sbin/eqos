@@ -38,8 +38,12 @@ TABLE_FAMILY="inet"
 TABLE_NAME="eqos"
 CHAIN_NAME="forward"
 CHAIN_GLOBAL="forward_global"
-MARK_CLEAR_MASK="0xffff0000"
-QUEUE_MARK_MASK="0x0000ffff"
+# The 64-queue layout uses mark bits 0-5 for the QDMA QID. Every write keeps
+# the other bits, which mwan3 and pbr use for their routing marks.
+MARK_CLEAR_MASK="0xffffffc0"
+# The QID bits plus the HNAT exception bit: a flow with any of them set has
+# already been claimed by a device rule.
+QUEUE_MARK_MASK="0x000000bf"
 # HNAT tests bit 7 rather than an exact mark value.
 HNAT_EXCEPTION_BIT="0x80"
 HNAT_RESTART_DELAY=3
@@ -451,17 +455,19 @@ EOF
 	# later hook priority than $CHAIN_NAME, so it always sees the final mark
 	# regardless of when add_rule appends its per-device rules. Flows that
 	# already carry a queue id keep it, and the software-shaped flows tagged
-	# with $HNAT_EXCEPTION_BIT are skipped because their mark is non-zero.
+	# with $HNAT_EXCEPTION_BIT are skipped because they carry that bit.
 	# $dev is excluded on both sides so bridged LAN-to-LAN traffic is not
 	# accounted as download.
 	"$NFT" add rule "$TABLE_FAMILY" "$TABLE_NAME" "$CHAIN_GLOBAL" \
 		iifname "$dev" oifname != "$dev" \
 		meta mark '&' "$QUEUE_MARK_MASK" 0 \
-		counter meta mark set "$GLOBAL_UP_QID" || return 1
+		counter meta mark set meta mark '&' "$MARK_CLEAR_MASK" '|' "$GLOBAL_UP_QID" ||
+		return 1
 	"$NFT" add rule "$TABLE_FAMILY" "$TABLE_NAME" "$CHAIN_GLOBAL" \
 		iifname != "$dev" oifname "$dev" \
 		meta mark '&' "$QUEUE_MARK_MASK" 0 \
-		counter meta mark set "$GLOBAL_DL_QID" || return 1
+		counter meta mark set meta mark '&' "$MARK_CLEAR_MASK" '|' "$GLOBAL_DL_QID" ||
+		return 1
 }
 
 reset_hnat_qdma() {
@@ -806,7 +812,8 @@ nft_addr_rule() {
 	[ "$guarded" != "1" ] || guard="meta mark & $HNAT_EXCEPTION_BIT == 0"
 
 	"$NFT" add rule "$TABLE_FAMILY" "$TABLE_NAME" "$CHAIN_NAME" \
-		"$family" "$addr" "$value" $guard counter meta mark set "$mark"
+		"$family" "$addr" "$value" $guard counter \
+		meta mark set meta mark '&' "$MARK_CLEAR_MASK" '|' "$mark"
 }
 
 nft_mark_rule() {
@@ -844,7 +851,7 @@ nft_class_rule() {
 
 	"$NFT" add rule "$TABLE_FAMILY" "$TABLE_NAME" "$CHAIN_NAME" \
 		"$family" "$addr" "$value" counter \
-		meta mark set "$HNAT_EXCEPTION_BIT" \
+		meta mark set meta mark '&' "$MARK_CLEAR_MASK" '|' "$HNAT_EXCEPTION_BIT" \
 		meta priority set "1:$classid"
 }
 
@@ -1188,7 +1195,7 @@ nft_traffic_emit() {
 
 	"$NFT" add rule "$TABLE_FAMILY" "$TABLE_NAME" "$CHAIN_NAME" \
 		$sel $match meta mark '&' "$HNAT_EXCEPTION_BIT" == 0 \
-		meta mark set "$qid" || return 1
+		meta mark set meta mark '&' "$MARK_CLEAR_MASK" '|' "$qid" || return 1
 }
 
 # Direction comes from the bridge, not from the port: a packet leaving the LAN

@@ -239,9 +239,17 @@ const parse_rule_counters = () => {
 				counted = true;
 			}
 
+			/* The rules keep the mark bits they do not own, so the value
+			 * is "meta mark & mask | id" and the id is the right operand. */
 			if (e.mangle && e.mangle.key && e.mangle.key.meta &&
-			    e.mangle.key.meta.key == 'mark' && type(e.mangle.value) == 'int')
-				mark = e.mangle.value;
+			    e.mangle.key.meta.key == 'mark') {
+				let v = e.mangle.value;
+
+				if (type(v) == 'object' && type(v['|']) == 'array')
+					v = v['|'][1];
+				if (type(v) == 'int')
+					mark = v;
+			}
 
 			/* The address the rule selects on, and which side it is: a source
 			 * match is the device sending, a destination match is it
